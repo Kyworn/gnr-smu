@@ -1,0 +1,14 @@
+# Binaires et BIOS
+*.ROM
+*.zip
+gnr_monitor
+extracted_bios/
+
+# Sources externes
+ryzen_smu_source/
+
+# Fichiers temporaires et logs
+*.log
+*.dat
+*.dsl
+__pycache__/
