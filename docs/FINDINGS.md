@@ -16,17 +16,17 @@
 
 ## 2. Driver `gnr-smu` (Maison)
 
-Pour éviter les corruptions du bus SMN, nous avons développé `gnr_smu.c` :
-- **Exclusivité :** Utilisation de `mutex` pour bloquer les accès concurrents.
-- **Interface :** `/dev/gnr_smu` accessible par `echo "ID ARG" > /dev/gnr_smu`.
-- **Logging :** Sorties détaillées dans `dmesg`.
+Driver noyau natif développé pour Granite Ridge :
+- **Exclusivité :** Mutex garantissant un accès unique pour éviter les crashs bus SMN.
+- **Rafraîchissement :** Automatique via `smn_write(0x05)` à chaque lecture sur `/dev/gnr_smu`.
+- **Accès Mémoire :** Mapping via `memremap` de la zone DRAM dédiée à la PM Table.
 
 ---
 
 ## 3. PM Table — Cartographie (v0x620105)
 
 Accès via RSMU MSG `0x04` (adresse) et `0x05` (transfert).  
-Taille : `0x724` octets. Format : `float32` Little Endian.
+Taille : `0x724` octets.
 
 | Offset (Hex) | Signification | Unité |
 |--------------|---------------|-------|
