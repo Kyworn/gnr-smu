@@ -1,15 +1,13 @@
 import tkinter as tk
 from tkinter import ttk
 import struct
-import threading
 import time
 
-# Structure de la table pour GNR
-# Offset 0x050: Package Power, 0x4D4: VCORE, 0x4F4: TEMP, 0x514: FREQ
+# Structure de la table pour GNR (offset 0x724)
 class GNRMonitorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("GNR-SMU Control Center")
+        self.root.title("GNR-SMU Telemetry (Live)")
         self.running = True
         
         self.create_widgets()
@@ -27,17 +25,13 @@ class GNRMonitorGUI:
 
     def read_pm_table(self):
         try:
-            with open("/dev/gnr_smu", "rb") as f:
-                data1 = f.read(0x724)
-                time.sleep(0.01) # Petit délai pour le double read
-                data2 = f.read(0x724)
-                
-                # Vérification simple (double read)
-                if data1 == data2:
-                    return struct.unpack("<466f", data1[:1864])
+            # Lecture directe via l'interface du driver (auto-refresh)
+            with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
+                data = f.read(0x724)
+                if len(data) < 0x724: return None
+                return struct.unpack("<466f", data[:1864])
         except Exception:
             return None
-        return None
 
     def update_loop(self):
         if not self.running: return
@@ -50,9 +44,10 @@ class GNRMonitorGUI:
             
             # Mise à jour treeview
             for i in range(8):
-                freq = data[325 + i] * 1000 # 0x514 = 1300 bytes / 4
-                volt = data[309 + i] # 0x4D4 = 1236 bytes / 4
-                temp = data[317 + i] # 0x4F4 = 1268 bytes / 4
+                # Offsets basés sur le mapping validé
+                freq = data[325 + i] * 1000 
+                volt = data[309 + i] 
+                temp = data[317 + i] 
                 
                 item = f"Core {i}"
                 if self.tree.exists(item):
@@ -66,5 +61,3 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = GNRMonitorGUI(root)
     root.mainloop()
-EOF
-,file_path:
