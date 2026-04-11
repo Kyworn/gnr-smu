@@ -16,22 +16,24 @@
 
 ## 2. Driver `gnr-smu` (Maison)
 
-Pour éviter les corruptions du bus SMN lors des lectures répétées, nous avons développé notre propre driver (`/driver/gnr_smu.c`) :
+Pour éviter les corruptions du bus SMN, nous avons développé `gnr_smu.c` :
 - **Exclusivité :** Utilisation de `mutex` pour bloquer les accès concurrents.
 - **Interface :** `/dev/gnr_smu` accessible par `echo "ID ARG" > /dev/gnr_smu`.
-- **Logging :** Sorties détaillées dans `dmesg` pour debugging post-crash.
+- **Logging :** Sorties détaillées dans `dmesg`.
 
 ---
 
 ## 3. PM Table — Cartographie (v0x620105)
 
-Accès via RSMU MSG `0x04` (adresse) et `0x05` (transfert).
+Accès via RSMU MSG `0x04` (adresse) et `0x05` (transfert).  
+Taille : `0x724` octets. Format : `float32` Little Endian.
 
 | Offset (Hex) | Signification | Unité |
 |--------------|---------------|-------|
 | 0x008        | PPT Limit     | Watt  |
 | 0x050        | Package Power | Watt  |
 | 0x4D4 - 0x4F0| Vcore (C0-C7) | Volt  |
+| 0x4F4 - 0x510| Temp (C0-C7)  | °C    |
 | 0x514 - 0x530| Freq (C0-C7)  | GHz   |
 | 0x5D4 - 0x5F0| Boost Limit   | GHz   |
 
@@ -53,4 +55,7 @@ Accès via RSMU MSG `0x04` (adresse) et `0x05` (transfert).
 ## 5. ⚠ Pièges documentés
 
 1.  **MSG 0x10 (MP1) :** Provoque une **perte immédiate d'affichage** (GPU Power Gate).
-2.  **`monitor_cpu` générique :** Incompatible (provoque crash GFX). Utiliser `tools/gnr_monitor`.
+2.  **`monitor_cpu -f` :** Incompatible avec Granite Ridge. Provoque un **crash GFX** (écran vert/noir).
+3.  **Probing aveugle :** Ne jamais tester les IDs 0x03-0x0D sur MP1 (risque de crash DMA).
+EOF
+,file_path:
