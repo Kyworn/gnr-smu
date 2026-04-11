@@ -1,36 +1,15 @@
-# Liste des tâches — GNR-SMU
+# Remaining Tasks — GNR-SMU
 
-## Driver `gnr_smu.c`
+## Resolved Issues
 
-- [x] **IOCTL Implementation** — `GNR_SMU_IOCTL_SEND` implémenté (`_IOWR('G', 0x01, struct gnr_smu_msg)`)
-- [x] **Safety Guard** — Whitelist MP1 : seuls les IDs confirmés sont acceptés (0x01, 0x02, 0x3C-0x3F, 0x4E-0x4F, 0x5F-0x61, 0x50-0x57)
-- [x] **Data Integrity** — Double-read : `refresh_pm_table()` avant chaque lecture, `kmalloc` au lieu de VLA stack
-- [x] **dram_base 64-bit** — `addr_lo | (addr_hi << 32)` (ARG0 + ARG1), plus de troncature
-- [x] **RSP polling** — `usleep_range` + timeout `jiffies` au lieu de `msleep(20)` aveugle
-- [x] **RSP clear** — `smn_write(rsp_reg, 0)` avant chaque envoi
-- [ ] **Automatic Refresh Cache** — Ajouter un `kthread` ou `timer` pour refresh périodique toutes les Ns sans attendre une lecture
+- [x] **Curve Optimizer (0x50-0x57)** — Validated format: Signed 32-bit int (e.g., -30 = `0xFFFFFFE2`). Successfully integrated into both CLI and GUI.
+- [x] **EDC / TDC Reversal bug** — Validated via fuzzing that on Zen 5, `0x3C` is EDC and `0x3D` is TDC. GUI sliders swapped and fixed.
+- [x] **Driver Transition** — Replaced the obsolete custom `gnr_smu` driver in favor of the official `ryzen_smu` endpoints (`/sys/kernel/ryzen_smu_drv/`).
+- [x] **Frequency Mapping** — Confirmed that PM table offsets `0x514` provide direct GHz floats per core.
+- [x] **iGPU Telemetry** — Isolated `0x1AC` (iGPU Power Wattage) and `0x1B0` (iGPU Clock) via Pearson Correlation modeling.
 
-## Outils
+## Open Research (Low Priority)
 
-- [x] **GUI double-read** — Réouverture du fichier entre les deux lectures (plus de `ppos` bloqué)
-- [x] **GUI struct size** — `<457f` / `data1[:1828]` (était `466f`/1864 qui débordait)
-- [ ] **Frequency Mapping** — Valider que `CORE_FREQ[i] * 1000.0` donne bien des MHz (table en GHz → ×1000 = MHz ✓ à confirmer live)
-- [ ] **GUI PPT Slider** — Ajouter un slider pour régler le PPT via l'ioctl depuis la GUI
-
-## Recherche
-
-- [ ] **Curve Optimizer (0x50-0x57)** — Valider le format de l'argument (int32 signé ? plage -30/+30 ?)
-- [ ] **IDs 0x58-0x5D** — Identifier ce que font ces 6 IDs séquentiels après les 8 cores
-- [ ] **MSG 0x6B** — Tester avec différents ARG (0, 1, 2…) pour voir si c'est GetTableDramAddress sur MP1
-- [ ] **HSMP** — Explorer si l'interface HSMP offre des données supplémentaires (GetSocketPowerLimit, etc.)
-- [ ] **PM Table taille réelle** — 0x724 est estimé. Vérifier si la table continue au-delà (version 0x620105)
-
-## Compilation après fix
-
-```bash
-cd ~/gnr-smu/driver
-make clean && make
-sudo rmmod gnr_smu
-sudo insmod gnr_smu.ko
-dmesg | tail -5
-```
+- [ ] **IDs 0x58-0x5D** — Identify what these 6 sequential MSG IDs do after the 8 cores' Curve Optimizer arrays.
+- [ ] **HSMP** — Explore if the Host System Management Port (HSMP) ACPI interface provides cleaner standard data for power limits than the direct mailbox polling.
+- [ ] **Unidentified Floats** — Fully decode the remaining ~180 floats in the `0x724` telemetry block (e.g. C-state residencies).

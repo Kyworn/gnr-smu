@@ -1,11 +1,11 @@
-# Snapshot Complet — État BIOS Default Post-Reboot
+# Full Snapshot — Default BIOS State (Post-Reboot)
 
 **Date :** 2026-04-11 00:26 CEST | Uptime : 7 min (fresh reboot)  
 **Kernel :** 6.19.11-1-cachyos | **BIOS :** ASRock B65IRW v4.10  
 
 ---
 
-## Identification CPU
+## CPU Identification
 
 | Champ | Valeur |
 |-------|--------|
@@ -58,7 +58,7 @@
 |---------|-----|---------|------|
 | P0 (MSR C0010064) | 0x800000004BF243AC | oui | Boost |
 | P1 (MSR C0010065) | 0x80000000479E4258 | oui | Base |
-| P2–P7 | 0x0 | non | Inutilisés |
+| P2–P7 | 0x0 | no | Unused |
 | MSR_PSTATE_CUR_LIM | 0x10 | — | MaxPstate=1, HwLimit=P0 |
 | MSR_PSTATE_CTL | 0x0 | — | P-state cible = P0 |
 
@@ -73,10 +73,10 @@
 | PKG_ENERGY au reboot+7min | 0x466E603F → **18 030 J** (~43W avg) |
 | RAPL powercap package-0 | **disabled** (enabled=0) |
 
-Note : RAPL désactivé via powercap → ne pas utiliser `/sys/class/powercap` pour mesurer.  
-Utiliser `turbostat` (APERF/MPERF) à la place.
+Note: RAPL is disabled via powercap → do not use `/sys/class/powercap` for measurements.  
+Use `turbostat` (APERF/MPERF) instead.
 
-## Températures (idle, Brave fermé)
+## Temperatures (Idle)
 
 | Capteur | Valeur | Source |
 |---------|--------|--------|
@@ -134,21 +134,21 @@ Les adresses SMN SVI3 classiques (0xE0080, 0xE00A0) retournent 0xFFFFFFFF → pa
 | 0x3B10998 | 0x01 | status |
 | 0x3B1099C | 0x01 | status |
 
-### Découverte MSG IDs 0x00–0x0D
+### MSG IDs Discovery 0x00–0x0D
 
-| MSG | RSP | ARG0_ret | Interprétation |
+| MSG | RSP | ARG0_ret | Interpretation |
 |-----|-----|----------|----------------|
 | 0x01 | 0x01 ✓ | 0x01 | TestMessage |
 | 0x02 | 0x01 ✓ | 0x00624B00 | GetSmuVersion → 98.75.0 |
 | 0x03 | 0x01 ✓ | 0x00 | ? |
-| 0x04 | 0xFD ✗ | 0x00 | Rejeté |
+| 0x04 | 0xFD ✗ | 0x00 | Rejected |
 | 0x05 | 0x01 ✓ | 0x00 | ? |
 | 0x06 | 0x01 ✓ | 0x00 | ? |
 | 0x07 | 0x01 ✓ | 0x00 | ? |
 | 0x08 | 0x01 ✓ | 0x00 | ? |
-| 0x09 | 0xFD ✗ | 0x00 | Rejeté |
+| 0x09 | 0xFD ✗ | 0x00 | Rejected |
 | 0x0A | 0x01 ✓ | 0x00 | ? |
-| 0x0B | 0xFF  | 0x00 | Erreur inconnue |
+| 0x0B | 0xFF  | 0x00 | Unknown Error |
 | 0x0C | 0x01 ✓ | 0x00 | ? (GetPMTableVersion ?) |
 | 0x0D | 0x01 ✓ | **0x20444D41 = "AMD "** | Signature ? |
 | 0x3C | 0x01 ✓ | — | SetEDCLimit (mA) |
@@ -194,20 +194,17 @@ sudo reboot
 | Limite | Valeur | Base de calcul |
 |--------|--------|----------------|
 | PPT | ~162W | 1.35 × TDP 120W |
-| TDC | 85A | (Valeur BIOS Stock constatée, max 160A PBO) |
-| EDC | 120A | (Valeur BIOS Stock constatée, max 220A PBO) |
-| TjMax | 85°C | PBO configuré manuellement (BIOS) |
-| SlowPPT | ~88W | ~0.55 × PPT (typique STAPM) |
+| TDC | 85A | (Observed Stock BIOS. PBO uncaps to ~160A) |
+| EDC | 120A | (Observed Stock BIOS. PBO uncaps to ~220A) |
+| TjMax | 85°C | Manual PBO config |
+| SlowPPT | ~88W | ~0.55 × PPT (typical STAPM) |
 
-⚠ Ces valeurs ne sont **pas lisibles** via mailbox (pas de GetPPTLimit connu).
+⚠ These default values are **not readable** via mailbox (no known Get function).
 
-## ⚠ Pièges documentés
+## ⚠ Documented Pitfalls
 
-1. **`ppt 0` = 0 mW = throttle total** → CPU bloqué à 606 MHz. NE PAS FAIRE.
-2. **`/proc/cpuinfo "cpu MHz"` est FAUX** sur amd-pstate-epp (affiche 606 même à 5 GHz).
-3. **`turbostat Bzy_MHz` = VRAI** (APERF/MPERF hardware).
-4. **7z est cache-bound** sur 9800X3D (96MB V-Cache) → pas sensible au PPT.
-5. **stress-ng matrixprod aussi cache-bound** sur ce CPU.
-6. **RAPL powercap désactivé** → ne pas utiliser `/sys/class/powercap`.
-7. **Reboot = récupération totale** (SMU 100% volatile).
-8. **Brave en fond** fausse les mesures (jusqu'à 73% CPU / 103W).
+1. **`ppt 0` = 0 mW = total throttle** → CPU locks to 606 MHz. DO NOT DO THIS.
+2. **`/proc/cpuinfo "cpu MHz"` is FAKE** on amd-pstate-epp (shows 606 even at 5 GHz).
+3. **`turbostat Bzy_MHz` = REAL** (硬件 APERF/MPERF).
+4. **7z is cache-bound** on 9800X3D (96MB V-Cache) → ignores PPT changes usually.
+5. **RAPL powercap is disabled** → do not use `/sys/class/powercap`.
