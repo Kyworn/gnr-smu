@@ -151,8 +151,8 @@ Les adresses SMN SVI3 classiques (0xE0080, 0xE00A0) retournent 0xFFFFFFFF → pa
 | 0x0B | 0xFF  | 0x00 | Erreur inconnue |
 | 0x0C | 0x01 ✓ | 0x00 | ? (GetPMTableVersion ?) |
 | 0x0D | 0x01 ✓ | **0x20444D41 = "AMD "** | Signature ? |
-| 0x3C | 0x01 ✓ | — | SetTDCLimit (mA) |
-| 0x3D | 0x01 ✓ | — | SetEDCLimit (mA) |
+| 0x3C | 0x01 ✓ | — | SetEDCLimit (mA) |
+| 0x3D | 0x01 ✓ | — | SetTDCLimit (mA) |
 | 0x3E | 0x01 ✓ | — | SetPPTLimit (mW) |
 | 0x3F | 0x01 ✓ | — | SetTjMax (°C) |
 | 0x4F | 0x01 ✓ | — | SetSustainedPwrLimit (mW) |
@@ -194,8 +194,8 @@ sudo reboot
 | Limite | Valeur | Base de calcul |
 |--------|--------|----------------|
 | PPT | ~162W | 1.35 × TDP 120W |
-| TDC | ~160A | Typique ASRock B650I + PBO |
-| EDC | ~220A | Typique Zen 5 |
+| TDC | 85A | (Valeur BIOS Stock constatée, max 160A PBO) |
+| EDC | 120A | (Valeur BIOS Stock constatée, max 220A PBO) |
 | TjMax | 85°C | PBO configuré manuellement (BIOS) |
 | SlowPPT | ~88W | ~0.55 × PPT (typique STAPM) |
 
