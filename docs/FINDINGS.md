@@ -27,12 +27,15 @@ We migrated completely to the official [ryzen_smu](https://github.com/amkillam/r
 Full size: `0x724` bytes. Fetched continuously alongside core metrics.
 For a complete variable-to-byte mapping, reference **[PM_TABLE_MAP.md](../PM_TABLE_MAP.md)**.
 
-*Notable discoveries via Pearson Correlation:*
-- **iGPU Clock (sclk):** Floating point at offset `0x1B0`.
-- **iGPU Power (W):** Floating point at offset `0x1AC`.
-- **SoC Temp (°C):** Floating point at offset `0x024` (confirmed by struct). Stable candidate also at `0x0F8` (~57°C).
-- **Tctl / CPU Die Temp (°C):** Floating point at offset `0x100` (matches k10temp Tctl, moves dynamically).
-- **GFX Junction Temp (°C):** Floating point at offset `0x2E8`.
+*Notable discoveries via Pearson Correlation + cross-validation:*
+- **iGPU Clock (sclk):** Offset `0x1B0` — validated vs amdgpu freq1_input.
+- **iGPU Power (W):** Offset `0x1AC`.
+- **Core Temperatures (°C):** Offsets `0x4F4-0x510` — only direct °C readings validated in the entire table.
+- **VDDCR_SoC:** Offset `0x0D4` (0.954V) — matches amdgpu vddnb (0.945V, 9mV delta).
+- **Vcore P1:** Offset `0x0C4` (1.213V) — matches amdgpu vddgfx (1.220V).
+- **VDDIO_MEM:** Offset `0x0E8` (1.099V) — matches DDR5 1.1V nominal.
+
+**⚠ Temperature encoding caveat:** Offsets `0x00C`, `0x024`, `0x100`, `0x2E8`, `0x348` are thermal *metrics* with non-linear encoding — they do NOT map 1:1 to °C. Only core temps (`0x4F4-0x510`) are direct °C. Cross-validated against k10temp and amdgpu sysfs.
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Size:** 0x724 bytes (1828 bytes = 457 float32)  
 **Source:** `/sys/kernel/ryzen_smu_drv/pm_table`  
-**Method:** Static/dynamic analysis + stress test differential (idle vs full CPU load) + cross-reference with `pm_table_gnr` struct (ryzen_smu) + Zen 3/4 `pm_table_0x240903` field patterns.  
+**Method:** Static/dynamic analysis + stress test differential (idle vs full CPU load) + cross-reference with `pm_table_gnr` struct (ryzen_smu) + Zen 3/4 `pm_table_0x240903` field patterns + k10temp/amdgpu cross-validation.
 **Confidence:** CONFIRMED = struct match or validated | HIGH = strong pattern | MED = inferred | LOW = guess
 
 ---
@@ -14,10 +14,10 @@
 | 0x000 | 0 | 0 | Y | Reserved | CONFIRMED |
 | 0x004 | 1 | 0 | Y | Reserved | CONFIRMED |
 | 0x008 | 2 | 162.0 | Y | **PPT Limit (W)** | CONFIRMED |
-| 0x00C | 3 | ~37.3 | N | **Package Temperature (°C)** | CONFIRMED |
+| 0x00C | 3 | ~37.3 | N | **Package Thermal Metric** (encoded, stress=128, NOT direct °C) | CONFIRMED (struct=PACKAGE_TEMP, but values non-linear) |
 | 0x010 | 4-7 | 0 | Y | Reserved | CONFIRMED |
 | 0x020 | 8 | 120.0 | Y | **EDC Limit (A)** | CONFIRMED |
-| 0x024 | 9 | ~17.0 | N | **SoC Temperature (°C)** | CONFIRMED (struct) |
+| 0x024 | 9 | ~17.0 | N | **SoC Temperature Metric** (encoded, stress=86, struct=SOC_TEMP) | CONFIRMED (struct, but non-linear vs °C) |
 | 0x028 | 10 | 85.0 | Y | **TDC Limit (A)** | CONFIRMED |
 | 0x02C | 11 | ~51.0 | N | VRM / Hotspot Temperature (°C) | HIGH |
 
@@ -51,7 +51,7 @@
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x068 | 26 | ~37.3 | N | Package Temp (mirror of 0x00C) | HIGH |
+| 0x068 | 26 | ~37.3 | N | Pkg Thermal Metric (mirror of 0x00C) | HIGH |
 | 0x06C | 27 | ~5.44 | N | CPPC Max / DPM Freq [0] (GHz) | MED |
 | 0x070 | 28 | ~5.44 | N | CPPC Max / DPM Freq [1] (GHz) | MED |
 | 0x074 | 29 | ~5.44 | N | CPPC Max / DPM Freq [2] (GHz) | MED |
@@ -85,7 +85,7 @@
 |--------|-----|---------|--------|---------|------------|
 | 0x0C0 | 48 | ~1.22 | Y | Vcore Set Voltage (V) | HIGH |
 | 0x0C4 | 49 | ~1.21 | Y | Vcore P1 Voltage (V) | HIGH |
-| 0x0C8 | 50 | ~17.0 | N | SoC Temp (mirror of 0x024) | HIGH |
+| 0x0C8 | 50 | ~17.0 | N | SoC Thermal Metric (mirror of 0x024) | HIGH |
 | 0x0CC | 51 | ~20.5 | N | Pkg Power (mirror of 0x050) | HIGH |
 | 0x0D0 | 52 | ~56.9 | N | Accumulated Metric / Temp | MED |
 | 0x0D4 | 53 | 0.954 | Y | VDDCR_SoC Set Voltage (V) | HIGH |
@@ -104,7 +104,7 @@
 |--------|-----|---------|--------|---------|------------|
 | 0x0F8 | 62 | ~57.0 | Y | SoC Power Limit (W) | MED |
 | 0x0FC | 63 | 180.0 | Y | **EDC Max (A)** | CONFIRMED |
-| 0x100 | 64 | 50-89 | N | **Tctl / CPU Die Temp (°C)** | CONFIRMED (stress: 77→98) |
+| 0x100 | 64 | 65-100 | N | **Thermal Metric** (stagnates 96-100 stress, NOT direct Tctl) | CONFIRMED (stress: idle 65→stress 97, low delta vs k10temp=85°C) |
 | 0x104 | 65 | 552.0 | Y | Unknown Frequency/Limit | LOW |
 | 0x108 | 66 | 0 | Y | Reserved | — |
 | 0x10C | 67 | 0 | Y | Reserved | — |
@@ -192,8 +192,8 @@
 | 0x2D4-0x2D8 | 181-182 | 0 | Y | Reserved | — |
 | 0x2DC | 183 | 100.0 | Y | C-State Cap 1 (%) | MED |
 | 0x2E0-0x2E4 | 184-185 | 0 | Y | Reserved | — |
-| 0x186 | 186 | 30-80 | N | **GFX Junction Temp (°C)** | CONFIRMED (stress: 28→71) |
-| 0x2EC | 187 | 100-0x2E8 | N | **GFX Thermal Headroom (°C)** | CONFIRMED (stress: 71→29, inverse of 0x2E8) |
+| 0x2E8 | 186 | 22-80 | N | **GFX Thermal Metric** (encoded, amdgpu edge=47°C vs PM=23°C) | HIGH (Pearson validated, but offset mismatch with amdgpu) |
+| 0x2EC | 187 | inverse of 0x2E8 | N | **GFX Thermal Headroom** (inverse of 0x2E8) | CONFIRMED (stress: 71→29, always sum=100) |
 | 0x2F0-0x2F8 | 188-190 | 0 | Y | Reserved | — |
 | 0x2FC | 191 | 100.0 | Y | C-State Cap 2 (%) | MED |
 | 0x300-0x30C | 192-195 | 0 | Y | Reserved | — |
@@ -210,7 +210,7 @@
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
 | 0x344 | 209 | 90.0 | Y | Thermal Limit (°C) | HIGH |
-| 0x348 | 210 | ~38.0 | N | **CCD Temperature (°C)** | CONFIRMED (stress: 25→88) |
+| 0x348 | 210 | ~31 | N | **CCD Thermal Metric** (encoded, stress=100, k10temp Tccd1=50→85°C) | HIGH (stress reactive, but offset vs k10temp) |
 | 0x34C | 211 | 3000.0 | Y | MCLK (mirror) | HIGH |
 | 0x350 | 212 | ~4094 | N | **Package Energy Accumulator (J)** | CONFIRMED (stress: 2133→19383) |
 | 0x354 | 213 | 12.8 | Y | Current Limit (A?) | MED |
@@ -258,7 +258,7 @@
 | 0x448 | 274 | ~5.44 | N | Core Boost Limit Mirror (GHz) | HIGH |
 | 0x44C | 275 | ~1.20 | N | Live Voltage (V) | MED |
 | 0x450 | 276 | 0.010 | Y | Scalar | LOW |
-| 0x454 | 277 | ~37.3 | N | Package Temp (mirror) | HIGH |
+| 0x454 | 277 | ~37.3 | N | Pkg Thermal Metric (mirror) | HIGH |
 | 0x458 | 278 | ~50.8 | N | PPT Current Value (W) | HIGH |
 | 0x45C-0x4A4 | 279-297 | 0 | Y | Reserved | — |
 
@@ -418,15 +418,36 @@
 
 ---
 
+## Cross-Validation vs System Tools
+
+Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `/proc/stat`, and `cpufreq` sysfs:
+
+| PM Table Offset | PM Value | System Tool | System Value | Match? |
+|-----------------|----------|-------------|--------------|--------|
+| d[49] Vcore P1 | 1.213V | amdgpu vddgfx | 1.220V | YES (7mV delta) |
+| d[53] VDDCR_SoC | 0.954V | amdgpu vddnb | 0.945V | YES (9mV delta) |
+| d[58] VDDIO_MEM | 1.099V | DDR5 nominal | 1.1V | YES |
+| d[108] iGPU sclk | 647MHz | amdgpu freq1 | 600MHz | YES (PM more precise) |
+| d[317-324] Core temps | 37-40°C | k10temp range | reasonable | YES |
+| d[20] Pkg Power | 14.8-110W | stress profile | coherent | YES |
+| d[349-356] C6 Residency | 93%→0.5% | stress-ng load | perfect inverse | YES |
+| d[333-340] Core Power | 0.4→5.4W | Pkg Power split | coherent | YES |
+| d[554-570] FIT/IDD | 7→99% | full load | coherent | YES |
+| d[64] 0x100 | 65→97 | k10temp Tctl | 52→85°C | **NO — encoded metric** |
+| d[210] 0x348 | 20→100 | k10temp Tccd1 | 50→85°C | **NO — encoded metric** |
+| d[186] 0x2E8 | 23→80 | amdgpu edge | 47→71°C | **NO — encoded metric** |
+
+**Key finding:** Temperature offsets in the PM table use a non-linear encoding that does not map 1:1 to °C. Only **core temperatures (d[317-324])** read as direct °C. Voltages, frequencies, power, and C-state residency are direct readings.
+
 ## Summary Statistics
 
 | Category | Count |
 |----------|-------|
-| CONFIRMED (struct or Pearson validated) | 58 |
+| CONFIRMED (struct/Pearson/cross-validated) | 58 |
 | HIGH confidence (strong pattern match) | ~120 |
 | MEDIUM confidence (inferred) | ~80 |
 | LOW confidence (guess) | ~30 |
 | Reserved / Zero | ~170 |
 | **Total floats mapped** | **457** |
 
-*Note: This map was generated by cross-referencing the ryzen_smu `pm_table_gnr` struct, the Zen 3/4 `pm_table_0x240903` field layout, dynamic analysis (static vs moving over 3 snapshots), and Pearson correlation testing. Values are from idle state unless noted.*
+*Note: This map was generated by cross-referencing the ryzen_smu `pm_table_gnr` struct, the Zen 3/4 `pm_table_0x240903` field layout, dynamic analysis (idle/stress/post-stress), Pearson correlation, and cross-validation against k10temp/amdgpu sysfs. Temperature fields (except core temps) use non-linear encoding — treat as relative metrics, not direct °C.*
