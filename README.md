@@ -10,7 +10,7 @@ Tools and dynamic telemetry map for AMD Granite Ridge (Zen 5) SMU management, sp
   - **TDC limit:** Mapped to offset `0x3D` (not 0x3C as previously assumed on Zen 4). AMD hardware explicitly prevents runtime modifications of TDC on the 9800X3D for thermal safety.
   - **EDC limit:** Mapped to offset `0x3C`.
   - **Curve Optimizer (CO):** Write-only parameter. Local configuration caching ensures consistency across resets.
-- **PM Table Mapping:** Successfully mapped the `0x724` byte telemetry table. We successfully mapped FCLK, UCLK, and MCLK, alongside the elusive **iGPU power and junction temperatures** using stochastic correlation routines.
+- **PM Table Mapping:** Fully mapped the `0x724` byte telemetry table (457 float32 values). FCLK, UCLK, MCLK, iGPU telemetry (power/clock/activity/current), per-core C-state residency (C0/C1/C6), L3/V-Cache temperatures, Tctl, SoC power/voltage, per-core IDD, and energy accumulators — all identified and documented with confidence levels.
 - **Telemetry Access:** Real-time data is natively exposed by the `ryzen_smu` driver at `/sys/kernel/ryzen_smu_drv/pm_table`.
 
 ## 🛠 Tools
@@ -21,19 +21,19 @@ A lightweight command-line interface to read from and write boundaries to the ha
 - **Usage:** `sudo python3 tools/gnr_master.py`
 
 ### 2. `gnr_master.py` (GUI Version)
-A comprehensive PyQt6-based dashboard for real-time telemetry monitoring. Visualizes per-Core frequencies, voltages, Pkg powers, and Curve Optimizer offsets.
+A comprehensive PyQt6-based dashboard for real-time telemetry monitoring. Visualizes per-Core frequencies, voltages, Pkg powers, real CPU usage (via `/proc/stat`), and Curve Optimizer offsets.
 - **Location:** `tools/gui/gnr_master.py`
 - **Usage:** `sudo python3 tools/gui/gnr_master.py`
 
 ## 📖 Research Files & Archives
 - [BASELINE_SNAPSHOT.md](./BASELINE_SNAPSHOT.md): Exhaustive log of idle states, memory controllers, and structural pitfall documentation.
-- [PM_TABLE_MAP.md](./PM_TABLE_MAP.md): Detailed byte-by-byte layout of the telemetry table, documenting over 50 specific floats.
+- [PM_TABLE_MAP.md](./PM_TABLE_MAP.md): Complete byte-by-byte layout of the telemetry table — all 457 floats documented with confidence levels (CONFIRMED/HIGH/MED/LOW).
 - `research/`: Archived scripts used during the initial automated fuzzing, iGPU correlation hunting, and payload sniffing.
 
 ## 📋 Prerequisites
 - **Linux Kernel:** 6.10+
 - **Driver:** The official [ryzen_smu](https://github.com/amkillam/ryzen_smu) driver must be loaded (available in `ryzen_smu_source/`).
-- **Dependencies:** `python3-pyqt6` for the GUI.
+- **Dependencies:** `python3-pyqt6` and `pyqtgraph` for the GUI.
 
 ## ⚠ Safety & Disclaimer
 **This is experimental software.**

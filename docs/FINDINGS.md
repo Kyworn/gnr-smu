@@ -30,7 +30,9 @@ For a complete variable-to-byte mapping, reference **[PM_TABLE_MAP.md](../PM_TAB
 *Notable discoveries via Pearson Correlation:*
 - **iGPU Clock (sclk):** Floating point at offset `0x1B0`.
 - **iGPU Power (W):** Floating point at offset `0x1AC`.
-- **SoC Temp (°C):** Floating point at offset `0x100`.
+- **SoC Temp (°C):** Floating point at offset `0x024` (confirmed by struct). Stable candidate also at `0x0F8` (~57°C).
+- **Tctl / CPU Die Temp (°C):** Floating point at offset `0x100` (matches k10temp Tctl, moves dynamically).
+- **GFX Junction Temp (°C):** Floating point at offset `0x2E8`.
 
 ---
 
