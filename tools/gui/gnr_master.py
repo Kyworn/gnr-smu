@@ -332,6 +332,15 @@ class GNRMaster(QMainWindow):
 
     def update_data(self):
         try:
+            with open("/sys/kernel/ryzen_smu_drv/pm_table_version", "rb") as f:
+                ver = struct.unpack("<I", f.read(4))[0]
+                if ver != 0x620105:
+                    self.log_msg(f"PM TABLE VERSION MISMATCH: Expected 0x620105, got {hex(ver)}. Offsets corrupted!", "ERROR", ACCENT_RED)
+                    return
+        except Exception:
+            pass
+
+        try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
                 data = f.read(1828)
                 if len(data) == 1828:
