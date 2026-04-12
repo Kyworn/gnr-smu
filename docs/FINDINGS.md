@@ -50,6 +50,24 @@ For a complete variable-to-byte mapping, reference **[PM_TABLE_MAP.md](../PM_TAB
 - **0x50 to 0x57:** Per-core optimization (C0 to C7).
 - **ARG0 Format:** Signed 32-bit integer (e.g., -30 = `0xFFFFFFE2`). Write-only, requires local JSON caching for GUI persistence.
 
+### 4c. MSG IDs 0x58–0x6F — Exploration Result
+
+**Conclusion: dead zone on 9800X3D firmware (SMU 98.75.0)**
+
+Both MP1 and RSMU endpoints were probed via `stress-ng` differential + direct write:
+
+| Endpoint | IDs tested | Result |
+|----------|-----------|--------|
+| **MP1** (`mp1_smu_cmd`) | 0x58–0x6F | SMU **freezes** on first write — no response, timeout required |
+| **RSMU** (`rsmu_smu_cmd`) | 0x58–0x6F | `Permission denied` — driver guardrails block all IDs in this range |
+
+These 24 MSG IDs are either unmapped, firmware-reserved, or behind a privilege wall not exposed
+by `ryzen_smu`. The CO range ends at 0x57 (C7). Nothing useful lives above it on this platform.
+
+**HSMP** (`hsmp_smu_cmd`) was also tested — all commands return errors. Root cause: HSMP requires
+BIOS activation (`Advanced > AMD CBS > NBIO > SMU Common Options > HSMP Support`), which is
+`Auto (Disabled)` on consumer AM5 boards. The `amd_hsmp` driver is EPYC/server only.
+
 ---
 
 ## 5. ⚠ Documented Traps

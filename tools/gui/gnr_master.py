@@ -216,6 +216,9 @@ class CoreWidget(QFrame):
         vt_layout.addWidget(self.volt_lbl)
         vt_layout.addWidget(self.temp_lbl)
         layout.addLayout(vt_layout)
+        self.pwr_lbl = QLabel("0.00 W")
+        self.pwr_lbl.setStyleSheet("color: #fbbf24; border: none; font-size: 10px;")
+        layout.addWidget(self.pwr_lbl)
         load_lbl = QLabel("Load")
         load_lbl.setStyleSheet("color: #64748b; border: none; font-size: 8px;")
         layout.addWidget(load_lbl)
@@ -255,6 +258,7 @@ class GNRMaster(QMainWindow):
         self.current_ppt, self.current_tdc, self.current_edc = self._read_pm_limits()
         self.current_co = self.load_co_config()
         self.power_history = collections.deque([0.0] * 100, maxlen=100)
+        self.temp_history = collections.deque([40.0] * 100, maxlen=100)
         self.core_load_history = [
             collections.deque([0.0] * 20, maxlen=20) for _ in range(8)
         ]
@@ -305,7 +309,7 @@ class GNRMaster(QMainWindow):
         top_frame.setStyleSheet(
             f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 6px;"
         )
-        top_frame.setFixedHeight(140)
+        top_frame.setFixedHeight(175)
         top_layout = QHBoxLayout(top_frame)
         plot_vbox = QVBoxLayout()
         title_lbl = QLabel("⚡ Package Power Tracking")
@@ -328,7 +332,28 @@ class GNRMaster(QMainWindow):
             brush=(239, 68, 68, 60),
         )
         plot_vbox.addWidget(self.main_plot)
-        top_layout.addLayout(plot_vbox, 5)
+        top_layout.addLayout(plot_vbox, 4)
+        temp_vbox = QVBoxLayout()
+        temp_title_lbl = QLabel("🌡 Max Core Temp")
+        temp_title_lbl.setStyleSheet("color: #cbd5e1; border: none; font-weight: bold;")
+        temp_vbox.addWidget(temp_title_lbl)
+        self.temp_plot = pg.PlotWidget()
+        self.temp_plot.setBackground(None)
+        self.temp_plot.hideButtons()
+        self.temp_plot.enableAutoRange(axis="y", enable=True)
+        self.temp_plot.getAxis("left").setPen(TEXT_MUTED)
+        self.temp_plot.getAxis("bottom").setPen(TEXT_MUTED)
+        self.temp_plot.showGrid(x=False, y=True, alpha=0.3)
+        self.temp_plot.setStyleSheet("border: none;")
+        self.temp_curve = self.temp_plot.plot(
+            list(range(100)),
+            list(self.temp_history),
+            pen=pg.mkPen(ACCENT_ORANGE, width=2),
+            fillLevel=0,
+            brush=(249, 115, 22, 60),
+        )
+        temp_vbox.addWidget(self.temp_plot)
+        top_layout.addLayout(temp_vbox, 3)
         power_stats = QVBoxLayout()
         self.power_lbl = QLabel("0.00 W / 162.00 W")
         self.power_lbl.setStyleSheet(
@@ -385,21 +410,52 @@ class GNRMaster(QMainWindow):
         fclk_container = QWidget()
         fclk_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
         fclk_lay = QVBoxLayout(fclk_container)
-        fabric_lbl = QLabel("Fabric Clock (FCLK):\n2000 MHz")
-        fabric_lbl.setStyleSheet(
+        self.fclk_lbl = QLabel("Fabric Clock (FCLK):\n2000 MHz")
+        self.fclk_lbl.setStyleSheet(
             "color: #f8fafc; font-size: 14px; border: none; padding: 5px 0;"
         )
-        fclk_lay.addWidget(fabric_lbl)
+        fclk_lay.addWidget(self.fclk_lbl)
         status_layout.addWidget(fclk_container)
         uclk_container = QWidget()
         uclk_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
         uclk_lay = QVBoxLayout(uclk_container)
-        mem_lbl = QLabel("Memory Clock (UCLK):\n3000 MHz")
-        mem_lbl.setStyleSheet(
+        self.uclk_lbl = QLabel("Memory Clock (UCLK):\n3000 MHz")
+        self.uclk_lbl.setStyleSheet(
             "color: #f8fafc; font-size: 14px; border: none; padding: 5px 0;"
         )
-        uclk_lay.addWidget(mem_lbl)
+        uclk_lay.addWidget(self.uclk_lbl)
         status_layout.addWidget(uclk_container)
+
+        l3_container = QWidget()
+        l3_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+        l3_lay = QVBoxLayout(l3_container)
+        self.l3_lbl = QLabel("L3/V-Cache:\n-- / -- °C")
+        self.l3_lbl.setStyleSheet(
+            "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
+        )
+        l3_lay.addWidget(self.l3_lbl)
+        status_layout.addWidget(l3_container)
+
+        soc_container = QWidget()
+        soc_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+        soc_lay = QVBoxLayout(soc_container)
+        self.soc_lbl = QLabel("SoC: -- W / -- V")
+        self.soc_lbl.setStyleSheet(
+            "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
+        )
+        soc_lay.addWidget(self.soc_lbl)
+        status_layout.addWidget(soc_container)
+
+        igpu_container = QWidget()
+        igpu_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+        igpu_lay = QVBoxLayout(igpu_container)
+        self.igpu_lbl = QLabel("iGPU: -- W / -- MHz")
+        self.igpu_lbl.setStyleSheet(
+            "color: #22d3ee; font-size: 13px; border: none; padding: 5px 0;"
+        )
+        igpu_lay.addWidget(self.igpu_lbl)
+        status_layout.addWidget(igpu_container)
+
         middle_layout.addWidget(status_frame, 1)
         content_layout.addLayout(middle_layout)
 
@@ -610,6 +666,22 @@ class GNRMaster(QMainWindow):
                         vcore_peak, f"{vcore_peak:.3f} V", f"Avg: {vcore_avg:.3f} V"
                     )
 
+                    # L3/V-Cache temps (direct °C, HIGH confidence)
+                    self.l3_lbl.setText(
+                        f"L3/V-Cache:\n{d[298]:.1f} / {d[299]:.1f} °C"
+                    )
+                    # SoC power (idx 21 = 0x054) + SoC voltage live (idx 95 = 0x17C)
+                    self.soc_lbl.setText(f"SoC: {d[21]:.1f} W / {d[95]:.3f} V")
+                    # iGPU power (idx 107 = 0x1AC) + iGPU clock (idx 108 = 0x1B0)
+                    self.igpu_lbl.setText(f"iGPU: {d[107]:.1f} W / {d[108]:.0f} MHz")
+                    # FCLK (idx 71 = 0x11C) / UCLK (idx 75 = 0x12C) dynamic
+                    self.fclk_lbl.setText(f"Fabric Clock (FCLK):\n{d[71]:.0f} MHz")
+                    self.uclk_lbl.setText(f"Memory Clock (UCLK):\n{d[75]:.0f} MHz")
+                    # Max core temp history
+                    max_temp = max(d[317 + i] for i in range(8))
+                    self.temp_history.append(max_temp)
+                    self.temp_curve.setData(list(range(100)), list(self.temp_history))
+
                     for i in range(8):
                         volt, temp = d[309 + i], d[317 + i]
                         freq, max_freq = d[325 + i] * 1000, d[373 + i] * 1000
@@ -621,6 +693,7 @@ class GNRMaster(QMainWindow):
                         cw.volt_lbl.setText(f"⚡ {volt:.3f} V")
                         cw.temp_lbl.setText(f"🌡 {temp:.2f} C")
                         cw.co_lbl.setText(f"CO: {self.current_co[i]}")
+                        cw.pwr_lbl.setText(f"{d[333 + i]:.2f} W")
 
                         self.core_load_history[i].append(load)
                         cw.bg.setOpts(height=list(self.core_load_history[i]))
