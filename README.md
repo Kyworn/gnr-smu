@@ -1,5 +1,7 @@
 # GNR-SMU : Granite Ridge SMU Control
 
+![GNR-SMU Dashboard](assets/screenshot.png)
+
 Tools and dynamic telemetry map for AMD Granite Ridge (Zen 5) SMU management, specifically targeting the Ryzen 7 9800X3D under Linux.
 
 ## 🚀 Key Discoveries
