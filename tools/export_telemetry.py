@@ -26,8 +26,9 @@ NAMED_FIELDS = [
     ("edc_limit",        8,     "A"),
     ("tdc_limit",        10,    "A"),
     ("pkg_power",        20,    "W"),
-    ("soc_power",        21,    "W"),
-    ("soc_voltage",      95,    "V"),
+("soc_power", 21, "W"),
+("soc_telemetry", 87, "metric"),  # efficiency metric, NOT voltage
+("soc_telemetry_metric", 95, "unit"),  # NOT voltage, use d[87] or d[53] instead
     ("vcore_peak",       None,  "V"),   # computed: max(d[309..316])
     ("vcore_avg",        None,  "V"),   # computed: mean(d[309..316])
     ("fclk",             71,    "MHz"),

@@ -10,7 +10,7 @@ Tools and dynamic telemetry map for AMD Granite Ridge (Zen 5) SMU management, sp
   - **TDC limit:** Mapped to offset `0x3D` (not 0x3C as previously assumed on Zen 4). AMD hardware explicitly prevents runtime modifications of TDC on the 9800X3D for thermal safety.
   - **EDC limit:** Mapped to offset `0x3C`.
   - **Curve Optimizer (CO):** Write-only parameter. Local configuration caching ensures consistency across resets.
-- **PM Table Mapping:** Fully mapped the `0x724` byte telemetry table (457 float32 values). FCLK, UCLK, MCLK, iGPU telemetry (power/clock/activity/current), per-core C-state residency (C0/C1/C6), L3/V-Cache temperatures, Tctl, SoC power/voltage, per-core IDD, and energy accumulators — all identified and documented with confidence levels.
+- **PM Table Mapping:** Fully mapped the `0x724` byte telemetry table (457 float32 values). FCLK, UCLK, MCLK, iGPU telemetry (power/clock/activity/current), per-core C-state residency (C0/C1/C6), L3/V-Cache temperatures, Tctl, SoC power/telemetry (voltage offsets d[87], d[95], d[97] are NOT voltage but efficiency/ease metrics), per-core IDD, and energy accumulators — all identified and documented with confidence levels.
 - **Telemetry Access:** Real-time data is natively exposed by the `ryzen_smu` driver at `/sys/kernel/ryzen_smu_drv/pm_table`.
 
 ## 🛠 Tools
