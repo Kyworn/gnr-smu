@@ -670,8 +670,8 @@ class GNRMaster(QMainWindow):
                     self.l3_lbl.setText(
                         f"L3/V-Cache:\n{d[298]:.1f} / {d[299]:.1f} °C"
                     )
-                    # SoC power (idx 21 = 0x054) + SoC voltage live (idx 95 = 0x17C)
-                    self.soc_lbl.setText(f"SoC: {d[21]:.1f} W / {d[95]:.3f} V")
+# SoC power (idx 21 = 0x054) + SoC telemetry metric (idx 87, NOT voltage)
+self.soc_lbl.setText(f"SoC: {d[21]:.1f} W / {d[87]:.2f} (metric)")
                     # iGPU power (idx 107 = 0x1AC) + iGPU clock (idx 108 = 0x1B0)
                     self.igpu_lbl.setText(f"iGPU: {d[107]:.1f} W / {d[108]:.0f} MHz")
                     # FCLK (idx 71 = 0x11C) / UCLK (idx 75 = 0x12C) dynamic
