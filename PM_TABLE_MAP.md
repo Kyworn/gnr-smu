@@ -31,7 +31,7 @@
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x040 | 16 | ~1900 | N | Energy Accumulator / Counter | MED |
+| 0x040 | 16 | ~1900 | N | Energy Budget / Countdown Counter (↓ under stress) | MED |
 | 0x044 | 17 | ~0.6 | N | **Core Power Aggregate (W)** | CONFIRMED (stress: 0.7→64.5) |
 | 0x048 | 18 | ~1.37 | N | **Vcore Peak (V)** | CONFIRMED |
 | 0x04C | 19 | ~1.22 | Y | **Vcore Average (V)** | CONFIRMED |
@@ -131,8 +131,8 @@
 | 0x150 | 84 | 0.855 | Y | VDDP Voltage (V) | HIGH |
 | 0x154 | 85 | 0.855 | Y | VDDG Voltage (V) | HIGH |
 | 0x158 | 86 | 0.700 | Y | VDDM Voltage (V) | HIGH |
-| 0x15C | 87 | ~1.04 | N | VDDCR_SoC Live Voltage (V) | HIGH |
-| 0x160 | 88 | ~0.5 | N | SoC Telemetry Power (W) | MED |
+| 0x15C | 87 | ~0.20 | N | SoC Telemetry Metric (NOT voltage, idle=0.20 stress=varies) | MED |
+| 0x160 | 88 | ~0.1 | N | SoC Telemetry Power (W) | MED |
 | 0x164 | 89 | ~0.01 | N | Minor Rail Power (W) | LOW |
 | 0x168 | 90 | ~0.01 | N | Minor Rail Power (W) | LOW |
 | 0x16C-0x178 | 91-94 | 0 | Y | Reserved | — |
@@ -141,7 +141,7 @@
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x17C | 95 | ~1.04 | N | SoC Voltage Live (V) | HIGH |
+| 0x17C | 95 | ~0.04 | N | SoC Telemetry Metric (NOT voltage, idle=0.04) | LOW |
 | 0x180 | 96 | ~2.5 | N | SoC Power (W) | HIGH |
 | 0x184 | 97 | ~0.9 | N | SoC Telemetry Voltage (V) | MED |
 | 0x188-0x1A0 | 98-104 | 0 | Y | Reserved | — |
@@ -254,7 +254,7 @@
 | 0x438 | 270 | ~66.0 | N | **TDC Current Value (A)** | CONFIRMED (stress: 73→91) |
 | 0x43C | 271 | ~1.26 | N | SVI3 VDDCR_SoC VID (V) | HIGH |
 | 0x440 | 272 | 5.425 | Y | Max Boost Frequency (GHz) | HIGH |
-| 0x444 | 273 | ~1.03 | N | **VDDCR_SoC Live Voltage (V)** | CONFIRMED (stress: 0.66→7.96) |
+| 0x444 | 273 | ~0.46 | N | **SoC Telemetry Current/Power Metric** (NOT voltage, Pearson=0.999 with Pkg Power) | CONFIRMED (stress: 0.46→7.98, tracks load not voltage) |
 | 0x448 | 274 | ~5.44 | N | Core Boost Limit Mirror (GHz) | HIGH |
 | 0x44C | 275 | ~1.20 | N | Live Voltage (V) | MED |
 | 0x450 | 276 | 0.010 | Y | Scalar | LOW |
@@ -418,13 +418,55 @@
 
 ---
 
+## Dynamic Relationships (SMU Couplings)
+
+Validated by stress test (idle vs vecmath 16 threads, 15 snapshots):
+
+### Sum Constraints (A + B = constant)
+| Pair | Sum | Meaning |
+|------|-----|---------|
+| d[186] + d[187] | **100.000** | GFX Thermal + Thermal Headroom = 100 always |
+
+### Perfect Mirrors (Pearson > 0.999)
+| Pair | Meaning |
+|------|---------|
+| d[3] = d[26] = d[277] | Package Thermal (3 copies, delta < 0.002) |
+| d[9] = d[50] | SoC Thermal (2 copies, delta < 0.002) |
+| d[20] = d[51] | Package Power (exact copy) |
+| d[21] = d[56] | SoC Power (exact copy) |
+| d[58] = d[59] | VDDIO_MEM Voltage (exact copy) |
+| d[43] = d[44] | Max Voltage Limit (exact copy) |
+| d[27] = d[274] | CPPC Max Frequency / Boost Limit (exact copy) |
+
+### Inverse Couplings (A↑ when B↓)
+| Pair | Behavior |
+|------|----------|
+| d[341-348] FIT/IDD ↑ | d[349-356] C6 Residency ↓ (perfect inverse under stress) |
+| d[341-348] FIT/IDD ↑ | d[357-364] C0 Residency ↑ (tracks together) |
+| d[212] Energy Accum ↑ | d[452] Total Pkg Energy ↓ (rolling counter overflow) |
+
+### Correlated Domains (Pearson > 0.99)
+| Group | Offsets | Meaning |
+|-------|---------|---------|
+| Thermal cluster | d[3,26,277,317-324,448,449] | All core/pkg temps track together |
+| Power cluster | d[17,20,21,50,51,56,273,333-340] | All power metrics track together |
+| Energy cluster | d[212,397-404,453] | All energy accumulators track together |
+| Load cluster | d[301-308,341-348] | IDD and FIT track with load |
+
+### Ghost Floats (never change under any condition)
+- **182 non-zero statics**: AGESA constants, DPM tables, voltage setpoints, frequency limits, silicon IDs
+- **104 zero statics**: Reserved/unused
+- **Notable ghosts**: d[65]=552.0 (silicon limit?), d[263]=32 (thread count), d[264]=16 (core count), d[265]=5.5, d[266]=4.0 (topology), d[94]=0.985 (reference voltage)
+
+---
+
 ## Cross-Validation vs System Tools
 
 Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `/proc/stat`, and `cpufreq` sysfs:
 
 | PM Table Offset | PM Value | System Tool | System Value | Match? |
 |-----------------|----------|-------------|--------------|--------|
-| d[49] Vcore P1 | 1.213V | amdgpu vddgfx | 1.220V | YES (7mV delta) |
+| d[49] Vcore P1 | 1.214V | amdgpu vddgfx | 1.214V | YES (0mV delta) |
 | d[53] VDDCR_SoC | 0.954V | amdgpu vddnb | 0.945V | YES (9mV delta) |
 | d[58] VDDIO_MEM | 1.099V | DDR5 nominal | 1.1V | YES |
 | d[108] iGPU sclk | 647MHz | amdgpu freq1 | 600MHz | YES (PM more precise) |
