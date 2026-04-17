@@ -426,6 +426,16 @@ class GNRMaster(QMainWindow):
         uclk_lay.addWidget(self.uclk_lbl)
         status_layout.addWidget(uclk_container)
 
+        mclk_container = QWidget()
+        mclk_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+        mclk_lay = QVBoxLayout(mclk_container)
+        self.mclk_lbl = QLabel("Memory Clock (MCLK):\n1000 MHz")
+        self.mclk_lbl.setStyleSheet(
+            "color: #f8fafc; font-size: 14px; border: none; padding: 5px 0;"
+        )
+        mclk_lay.addWidget(self.mclk_lbl)
+        status_layout.addWidget(mclk_container)
+
         l3_container = QWidget()
         l3_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
         l3_lay = QVBoxLayout(l3_container)
@@ -439,17 +449,27 @@ class GNRMaster(QMainWindow):
         soc_container = QWidget()
         soc_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
         soc_lay = QVBoxLayout(soc_container)
-        self.soc_lbl = QLabel("SoC: -- W / -- V")
+        self.soc_lbl = QLabel("SoC: -- W / -- V (telem: --)")
         self.soc_lbl.setStyleSheet(
             "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
         )
         soc_lay.addWidget(self.soc_lbl)
         status_layout.addWidget(soc_container)
 
+        boost_container = QWidget()
+        boost_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+        boost_lay = QVBoxLayout(boost_container)
+        self.boost_lbl = QLabel("Max Boost: -- GHz")
+        self.boost_lbl.setStyleSheet(
+            "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
+        )
+        boost_lay.addWidget(self.boost_lbl)
+        status_layout.addWidget(boost_container)
+
         igpu_container = QWidget()
         igpu_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
         igpu_lay = QVBoxLayout(igpu_container)
-        self.igpu_lbl = QLabel("iGPU: -- W / -- MHz")
+        self.igpu_lbl = QLabel("iGPU: -- W / -- MHz / --%")
         self.igpu_lbl.setStyleSheet(
             "color: #22d3ee; font-size: 13px; border: none; padding: 5px 0;"
         )
@@ -655,7 +675,9 @@ class GNRMaster(QMainWindow):
                         self.current_edc, main_text=f"{self.current_edc:.0f} A"
                     )
                     self.tdc_gauge.setValue(
-                        self.current_tdc, main_text=f"{self.current_tdc:.0f} A"
+                        self.current_tdc,
+                        main_text=f"{self.current_tdc:.0f} A",
+                        bottom_text=f"Now: {d[270]:.1f} A",
                     )
                     self.power_history.append(pkg_pwr)
                     self.power_curve.setData(list(range(100)), list(self.power_history))
@@ -667,16 +689,19 @@ class GNRMaster(QMainWindow):
                     )
 
                     # L3/V-Cache temps (direct °C, HIGH confidence)
-                    self.l3_lbl.setText(
-                        f"L3/V-Cache:\n{d[298]:.1f} / {d[299]:.1f} °C"
+                    self.l3_lbl.setText(f"L3/V-Cache:\n{d[298]:.1f} / {d[299]:.1f} °C")
+                    self.soc_lbl.setText(
+                        f"SoC: {d[21]:.1f} W / {d[271]:.3f} V (telem: {d[273]:.2f})"
                     )
-# SoC power (idx 21 = 0x054) + SoC telemetry metric (idx 87, NOT voltage)
-self.soc_lbl.setText(f"SoC: {d[21]:.1f} W / {d[87]:.2f} (metric)")
+                    self.boost_lbl.setText(f"Max Boost: {d[272]:.2f} GHz")
                     # iGPU power (idx 107 = 0x1AC) + iGPU clock (idx 108 = 0x1B0)
-                    self.igpu_lbl.setText(f"iGPU: {d[107]:.1f} W / {d[108]:.0f} MHz")
+                    self.igpu_lbl.setText(
+                        f"iGPU: {d[107]:.1f} W / {d[108]:.0f} MHz / {d[109]:.0f}%"
+                    )
                     # FCLK (idx 71 = 0x11C) / UCLK (idx 75 = 0x12C) dynamic
                     self.fclk_lbl.setText(f"Fabric Clock (FCLK):\n{d[71]:.0f} MHz")
                     self.uclk_lbl.setText(f"Memory Clock (UCLK):\n{d[75]:.0f} MHz")
+                    self.mclk_lbl.setText(f"Memory Clock (MCLK):\n{d[79]:.0f} MHz")
                     # Max core temp history
                     max_temp = max(d[317 + i] for i in range(8))
                     self.temp_history.append(max_temp)
