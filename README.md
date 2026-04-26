@@ -42,8 +42,7 @@ A comprehensive PyQt6-based dashboard for real-time telemetry monitoring. Visual
 - The SMU defaults are highly volatile and a hard reset will revert all software commands to the Motherboard's BIOS constraints.
 
 ## ⚖️ License
-You are free to use, modify, and distribute this codebase for your own projects, **provided that you attribute the original author (Zorko)** and link back to this repository.
-**** (MIT)
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
 
 ---
 *Reverse-engineered and maintained by Zorko & Antigravity - April 2026*
