@@ -43,7 +43,7 @@ A comprehensive PyQt6-based dashboard for real-time telemetry monitoring. Visual
 
 ## ⚖️ License
 You are free to use, modify, and distribute this codebase for your own projects, **provided that you attribute the original author (Zorko)** and link back to this repository.
-**You may NOT use this software for commercial purposes or sell it.** (CC BY-NC 4.0)
+**** (MIT)
 
 ---
 *Reverse-engineered and maintained by Zorko & Antigravity - April 2026*
