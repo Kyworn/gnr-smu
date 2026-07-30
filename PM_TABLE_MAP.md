@@ -36,7 +36,7 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x040 | 16 | ~1900 | N | Energy Budget / Countdown Counter (↓ under stress) | MED |
+| 0x040 | 16 | 98 load → 1991 idle | N | **Bounded credit that refills at idle and drains under load.** Settles at exactly its ceiling 1991.1 within a second of load release and stays pinned there; falls to 98 under all-core load. Paired with d[452] (r = +0.94) and anti-correlated with d[212]/d[453] (r = −0.89). Not an energy total — it does not accumulate. Unit unknown | MED |
 | 0x044 | 17 | 0.7 idle → ~114 @8 thr → ~47 @16 thr | N | **Not** a core power aggregate — it exceeds package power in 36/60 samples at 8 threads (114.2 vs 110.9 W, physically impossible for a subset of the package) and is non-monotonic in load, peaking at 8 threads and falling at 16. Real meaning unknown; the 8-thread peak suggests a per-physical-core metric | LOW (was "Core Power Aggregate (W)" / CONFIRMED) |
 | 0x048 | 18 | ~1.37 | N | **Vcore Peak (V)** | CONFIRMED |
 | 0x04C | 19 | ~1.19 idle → ~1.31 load | N | **Vcore Average (V)** | CONFIRMED |
@@ -217,13 +217,13 @@ followed by its live value in the *same* unit. See
 | 0x344 | 209 | 90.0 | Y | Thermal Limit (°C) | HIGH |
 | 0x348 | 210 | 15-24 idle / 100 load | N | **Percentage / FIT-style utilization (%)** — saturates hard at 99.94-100.00 under load. **Not a temperature** | HIGH (corrected; a °C field would not pin at exactly 100) |
 | 0x34C | 211 | 3000.0 | Y | MCLK (mirror) | HIGH |
-| 0x350 | 212 | ~1450 idle → ceiling | N | Not a running total (plateaus under steady load) and **not** power-proportional either: it saturates at its ceiling from a *single* busy thread and stays there (1 thr 14536, 4 thr 14696, 8 thr 14528, 16 thr 12906 under `--matrix`), and the ceiling itself is workload-dependent (~23 200 under `--cpu`). Ratio against package power drifts 175 % across load levels. Unidentified | LOW (was "Package Energy Accumulator (J)" / CONFIRMED) |
+| 0x350 | 212 | 760 idle → ~23 250 load | N | **Fills under load, drains at idle** — the mirror direction of d[16]/d[452] (r = −0.65 / −0.77 against them, +0.71 against d[453]). Not a rescaled copy of d[453]: their ratio spans 0.74-16.4. Not a running total (plateaus under steady load) and **not** power-proportional either: it saturates at its ceiling from a *single* busy thread and stays there (1 thr 14536, 4 thr 14696, 8 thr 14528, 16 thr 12906 under `--matrix`), and the ceiling itself is workload-dependent (~23 200 under `--cpu`). Ratio against package power drifts 175 % across load levels. Unidentified | LOW (was "Package Energy Accumulator (J)" / CONFIRMED) |
 | 0x354 | 213 | 12.8 | Y | Current Limit (A?) | MED |
 | 0x358 | 214 | ~3.4 | N | Power Domain (W) | MED |
 | 0x35C | 215 | 4.0 | Y | Scalar / Multiplier | LOW |
 | 0x360 | 216 | ~1.03 | N | Live Voltage (V) | MED |
 | 0x364-0x36C | 217-219 | 400.0 | Y | Min DPM Frequency (MHz) | HIGH |
-| 0x370 | 220 | ~199-213 | N | **Not** part of the Min-DPM block — reads ~200, not 400, and drifts with load (202 → 213). Unidentified | LOW (was folded into the 400 MHz Min-DPM row) |
+| 0x370 | 220 | ~189-219 | N | **Not** part of the Min-DPM block — reads ~200, not 400. **Does not respond to load at all**: across a 120 W → 15 W release it moves 205.4 → 202.7, inside its own drift band. So it is not power, current, die temperature or frequency. Unidentified | LOW (was folded into the 400 MHz Min-DPM row) |
 | 0x374-0x380 | 221-224 | 400.0 | Y | Min DPM Frequency (MHz) | HIGH |
 | 0x384 | 225 | 0.600 | Y | Min DPM Voltage (V) | MED |
 | 0x388 | 226 | ~0.09 | N | Minor Power Domain (W) | LOW |
@@ -273,8 +273,8 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x4A8 | 298 | ~44.6 → ~48.4 | N | Slow thermal reading (°C), domain unconfirmed. Rises only 3.8 °C over 60 s of all-core load (slope 0.11 vs Tctl) — too flat for V-Cache. Tracks d[456] at a constant +9.39 offset, so the two share one sensor | LOW (was "L3/V-Cache Temp 0 / HIGH") |
-| 0x4AC | 299 | ~45.4 → ~49.2 | N | Slow thermal reading (°C), same behaviour as d[298] | LOW (was "L3/V-Cache Temp 1 / HIGH") |
+| 0x4A8 | 298 | ~44.6 → ~48.4 | N | Slow thermal reading (°C), domain unconfirmed. Rises only 3.8 °C over 60 s of all-core load (slope 0.11 vs Tctl) — too flat for V-Cache. **Does not respond to load**: across a 120 W → 15 W release it moves 46.5 → 45.9 °C, while Tctl drops 86 → 52 °C in the same second. Whatever it measures is thermally decoupled from the die — board, ambient, or a very long-window average. Locked triple with d[299] (+0.69) and d[456] (−9.44), so all three come off one sensor | LOW (was "L3/V-Cache Temp 0 / HIGH") |
+| 0x4AC | 299 | ~42.9 → ~51.1 | N | Same sensor as d[298], offset +0.69 °C (r = +0.9998, delta 0.62-0.84 over 640 samples). Equally unresponsive to a 120 W load release | LOW (was "L3/V-Cache Temp 1 / HIGH") |
 | 0x4B0-0x4B0 | 300 | 0 | Y | Reserved | — |
 
 ## Zone 0x4B4 — Per-Core IDD / Current (8 values)
@@ -417,8 +417,8 @@ followed by its live value in the *same* unit. See
 | 0x704 | 449 | ~35.5 → ~53.4 | N | Same filtered signal as d[448], offset ~−1.9 °C. **Not** min core temp (real min 74.9 °C vs 53.4 °C) | LOW (was "Min Core Temp / HIGH") |
 | 0x708 | 450 | ~5.43 | N | Peak Core Frequency (GHz) | HIGH |
 | 0x70C | 451 | ~5.44 | N | Average Core Frequency (GHz) | HIGH |
-| 0x710 | 452 | ~29024 → ~22777 | N | Rolling counter — **decreases** under load, so it is a credit/countdown, not an energy total. The real energy accumulator is d[212] (2503 → 23218) | LOW (was "Total Package Energy Accumulator / HIGH") |
-| 0x714 | 453 | 862 idle → 13 517 @16 thr | N | Monotonic in load and the closest field to power-proportional: d[453] / d[20] holds at 103-106 for 4, 8 and 16 threads (2.7 % spread) but collapses to 55-88 below that, so it is not a clean unit conversion of package power. Does not accumulate | MED |
+| 0x710 | 452 | 22 724 load → 29 514 idle | N | Bounded credit that **decreases** under load and refills at idle — same direction as d[16] (r = +0.94), opposite d[212]/d[453] (r = −0.77 / −0.96). Not an energy total, and not a rescaled d[16] either (their span-normalised traces differ by up to 0.50) | LOW (was "Total Package Energy Accumulator / HIGH"; the earlier note calling d[212] "the real energy accumulator" is also wrong — d[212] does not accumulate) |
+| 0x714 | 453 | 862 idle → 13 517 @16 thr | N | Monotonic in load and the closest field to power-proportional: d[453] / d[20] holds at 103-106 for 4, 8 and 16 threads (2.7 % spread) but collapses to 55-88 below that, so it is not a clean unit conversion of package power. Does not accumulate. Fills under load and drains at idle, paired with d[212] (r = +0.71) and anti-correlated with the d[16]/d[452] credits (r = −0.89 / −0.96) | MED |
 | 0x718 | 454 | 0 | Y | Reserved | — |
 | 0x71C | 455 | ~5.43 | N | Effective Frequency (GHz) | HIGH |
 | 0x720 | 456 | ~35.3 | N | Ambient / Board Temp (°C) | MED |
@@ -511,7 +511,7 @@ Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `
 | d[349-356] C6 Residency | 93%→0.5% | stress-ng load | perfect inverse | YES |
 | d[333-340] Core Power | 0.4→5.4W | Pkg Power split | coherent | YES |
 | d[554-570] FIT/IDD | 7→99% | full load | coherent | YES |
-| d[11] 0x02C Tctl | 49.3→82.8°C | k10temp Tctl | 49.4→84.0°C | YES (≤1.1°C delta, slope 0.97) |
+| d[11] 0x02C Tctl | 49.3→82.8°C | k10temp Tctl | 49.4→84.0°C | YES — see the read-order note below |
 | d[270] 0x438 hotspot | 51.8→87.2°C | k10temp Tctl | 49.4→84.0°C | YES (slope 1.02, sits ~3°C above Tctl) |
 | d[3] 0x00C PPT value | 27.9→128.2W | PPT limit d[2]=162W | ceiling respected | YES (it is watts, not °C) |
 | d[9] 0x024 TDC value | 9.3→86.7A | TDC limit d[8]=120A | ceiling respected | YES (it is amps, not °C) |
@@ -519,6 +519,23 @@ Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `
 | d[210] 0x348 | 15→100.00 (pinned) | k10temp Tccd1 | 38→83°C | **NO — a percentage** |
 | d[186] 0x2E8 | 0.003→0.015 | amdgpu edge | iGPU idle | **NO — iGPU activity %** |
 | d[448] 0x700 | 36.9→55.3 | core temp average d[317-324] | 36.4→78.3°C | **NO — heavily filtered, not the average** |
+
+### Reading the PM table perturbs the measurement (2026-07-30)
+
+Comparing `d[11]` against `k10temp` is order-sensitive, and the effect is larger than
+the quantity being validated. Over 60 paired reads at idle, `k10temp − d[11]` is:
+
+| Read order | Median delta | Spread |
+|------------|--------------|--------|
+| pm_table, then k10temp | **+4.51 °C** | +1.72 .. +8.25 |
+| k10temp, then pm_table | **+2.14 °C** | −0.26 .. +2.56 |
+| pm_table, 500 ms gap, k10temp | +2.82 °C | — |
+
+Reading `pm_table` costs an SMU mailbox transfer, and that transfer warms the die
+enough to show up in the very next sensor read — then decays over a few hundred ms.
+So **always read the external sensor first**, or the tool measures its own cost.
+`research/audit_map.py` does. The +2.1 °C that survives is the genuine offset between
+the two paths; anything above that was self-inflicted.
 
 ### Re-verification 2026-07-30
 
@@ -593,6 +610,60 @@ same quantity in another unit.
 
 Consequence for the GUI: an EDC gauge can only ever show the limit. That is
 already what it does — do not add a computed "EDC value".
+
+## Demoted offsets — domains narrowed, not identified (2026-07-30)
+
+Thirteen fields are confirmed *not* to be what this map used to claim, but their real
+meaning was still open. Two attempts, one useful.
+
+**What failed: level correlation.** `research/profile_demoted.py` pools 640 samples
+across seven load phases and regresses each target against twelve cross-validated
+axes. Five targets fit linearly (r² > 0.9), but none survives a runner-up check —
+under load every axis rises together, so a field that fits TDC current at r² = 0.974
+also fits package power at 0.973 and Tctl at 0.971. High r² against a load axis is
+worth nothing on its own:
+
+| Idx | Best fit | r² | Runner-up | Verdict |
+|-----|----------|-----|-----------|---------|
+| d[453] | IDD_A | 0.997 | TDC_A 0.997 | four axes tied |
+| d[448] | TDC_A | 0.974 | PPT_W 0.973 | indistinguishable |
+| d[449] | TDC_A | 0.973 | PPT_W 0.972 | indistinguishable |
+| d[452] | Vcore_V | 0.966 | Tctl 0.938 | indistinguishable |
+| d[16] | corePwr | 0.912 | FIT_pct 0.909 | indistinguishable |
+| d[17], d[64], d[210], d[212], d[220], d[278], d[298], d[299] | — | 0.56-0.77 | — | trend only, no axis explains them |
+
+**What failed next, and why it is worth recording: response time.**
+`research/transient_demoted.py` kills an all-core load at a known sample index and
+records the release at 0.2 s. The intent was to separate power-domain fields (collapse
+at once) from thermal ones (decay over tens of seconds). It does not work on this
+part: **Tctl itself falls 86 → 52 °C inside a single 0.2 s sample**, and hotspot within
+two. The Zen 5 die's thermal constant is below the table's update rate, so decay time
+carries no domain information here. Any future separation needs a different lever —
+a load that varies frequency at constant power, or a fixed power draw at two ambient
+temperatures.
+
+**What the transient did settle** — three fields that do not respond to a
+120 W → 15 W step at all, which rules out every load-coupled domain:
+
+- **d[220]** 205.4 → 202.7, inside its own drift band.
+- **d[298]/d[299]** 46.5 → 45.9 °C while Tctl drops 34 °C in the same second. Locked
+  triple with d[456] (offsets +0.69 and −9.44, r = 0.9998), so all three read one
+  sensor that is thermally decoupled from the die.
+
+**And the one real structural find** — four bounded counters form two opposed pairs:
+
+| Pair | Under load | At idle | Correlation |
+|------|-----------|---------|-------------|
+| d[16], d[452] | drain | refill to a hard ceiling | r = +0.94 |
+| d[212], d[453] | fill | drain | r = +0.71 |
+
+The pairs are anti-correlated with each other (down to r = −0.96). d[16] settles at
+exactly its ceiling of 1991.1 within a second of load release and stays pinned.
+Neither pair is a rescaled copy of itself — d[16] and d[452] differ by up to 0.50 once
+each is normalised to its own span, and d[212]/d[453] have a ratio spanning
+0.74-16.4 — so these are four distinct quantities, not two in two units. Consistent
+with a consumed/remaining budget pair (PPT or thermal credit), but the units are still
+unknown and no system sensor exposes anything to check them against.
 
 ## Honesty Audit 2026-07-30
 

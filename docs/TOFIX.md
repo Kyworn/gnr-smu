@@ -14,14 +14,18 @@
 - [x] **Frequency Mapping** — Confirmed that PM table offsets `0x514` provide direct GHz floats per core.
 - [x] **iGPU Telemetry** — Isolated `0x1AC` (iGPU Power Wattage) and `0x1B0` (iGPU Clock) via Pearson Correlation modeling.
 
+- [x] **Coverage gap closed (2026-07-30)** — the "90 undocumented indices" figure was a parser artifact: 11 rows had five columns and one index range was off by one, hiding 88 indices that were in fact documented. Only 2 were genuinely missing. `research/audit_map.py` now fails if any index has no parseable row.
+
 ## Open Research (Low Priority)
 
 - [ ] **IDs 0x58-0x5D** — Identify what these 6 sequential MSG IDs do after the 8 cores' Curve Optimizer arrays.
 - [ ] **HSMP** — Explore if the Host System Management Port (HSMP) ACPI interface provides cleaner standard data for power limits than the direct mailbox polling.
 - [ ] **Unidentified Floats** — Fully decode the remaining ~180 floats in the `0x724` telemetry block (e.g. C-state residencies).
 
-- [ ] **90 undocumented indices** — the map covers 367 of 457 floats. The remaining 90 have no row at all; `research/audit_map.py` prints the count on every run.
-- [ ] **d[212], d[397-404], d[453]** — not energy accumulators, and now also ruled out as power-proportional: the ratio against package power drifts 175-238 % across 1/4/8/16 threads. d[212] saturates at its ceiling from a *single* busy thread and the ceiling is workload-dependent (~14 500 under `--matrix`, ~23 200 under `--cpu`). d[453] is the closest, holding 103-106 x package W for 4-16 threads but collapsing below that. Evidence: `research/profile_load.py`.
-- [ ] **d[17] (0x044)** — was "Core Power Aggregate (W) / CONFIRMED"; disproved (exceeds package power at 8 threads, non-monotonic in load, peaks at 8 threads and falls at 16). Real meaning unknown. `sum(d[333-340])` is monotonic and is the better aggregate candidate, but sums to only ~34 % of package power, so its scope is unverified too.
-- [ ] **d[220] (0x370)** — reads ~200 and drifts with load, so it is not part of the 400 MHz Min-DPM block it used to be folded into. Unidentified.
-- [ ] **Re-identify the demoted offsets** — `0x100`, `0x348`, `0x458`, `0x4A8`/`0x4AC`, `0x700`/`0x704`, `0x710` are confirmed *not* to be what the map used to claim, but their real meaning is still open.
+
+- [ ] **Demoted offsets — domains narrowed, still unidentified** — thirteen fields are confirmed *not* to be what the map claimed; two profiling passes narrowed them without naming any. Full write-up in [PM_TABLE_MAP.md](../PM_TABLE_MAP.md#demoted-offsets--domains-narrowed-not-identified-2026-07-30). What is left open:
+  - **d[16]/d[452] and d[212]/d[453]** — four bounded counters in two opposed pairs (the first drains under load and refills to a hard ceiling, the second does the reverse; anti-correlated down to r = −0.96). Consistent with a consumed/remaining budget pair, but the unit is unknown and no system sensor exposes anything to check it against. Evidence: `research/profile_demoted.py`, `research/transient_demoted.py`.
+  - **d[448]/d[449]** — fit load linearly at r² ≈ 0.97, but TDC current, package power, PPT and Tctl are mutually indistinguishable at that level. Needs a load that decouples them.
+  - **d[220], d[298]/d[299]** — do not respond to a 120 W → 15 W step at all, which rules out every load-coupled domain. d[298]/d[299]/d[456] are a locked triple off one sensor that is thermally decoupled from the die.
+  - **d[17], d[64], d[210], d[278]** — only trend (r² 0.56-0.77); no known axis explains them. d[17] was "Core Power Aggregate (W) / CONFIRMED" and is disproved (exceeds package power at 8 threads, non-monotonic in load). `sum(d[333-340])` is monotonic and the better aggregate candidate, but sums to only ~34 % of package power, so its scope is unverified too.
+- [ ] **A load point that varies frequency at constant power** — the blocker for all of the above. Every stressor tried pushes power, current, temperature and utilisation up together, so regression cannot separate them, and response time cannot either: Tctl falls 86 → 52 °C inside one 0.2 s sample, so the die's thermal constant is below the table's update rate. Candidate levers: locked-frequency runs at two different core counts, or a fixed draw at two ambient temperatures.
