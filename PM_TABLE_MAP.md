@@ -267,7 +267,11 @@ followed by its live value in the *same* unit. See
 | 0x450 | 276 | 0.010 | Y | Scalar | LOW |
 | 0x454 | 277 | ~26 | N | Near-copy of d[3] PPT Value (W) — tracks it but is **not** identical (max delta 11.7 W over 120 samples) | MED (was "Pkg Thermal Metric / mirror") |
 | 0x458 | 278 | ~49 → ~54 | N | Unidentified, near-static. **Not PPT current value** — moves only 49→54 while real package power goes 28→128 W (that is d[3]) | LOW (corrected) |
-| 0x45C-0x4A4 | 279-297 | 0 | Y | Reserved | — |
+| 0x45C-0x46C | 279-283 | 0 | Y | Reserved | — |
+| 0x470 | 284 | 0, rare non-zero at idle | N | Not reserved: usually exactly 0, but occasionally non-zero **at idle only** (seen 0.0037 as a 1-in-40 spike, and 0.271 sustained across a whole 25-sample window). Exactly 0 under all-core load, every time. Unidentified | LOW (was "Reserved") |
+| 0x474-0x478 | 285-286 | 0 | Y | Reserved | — |
+| 0x47C | 287 | 0, rare non-zero at idle | N | Same behaviour as d[284], smaller magnitude (0.00093 spike, 0.111 sustained). Unidentified | LOW (was "Reserved") |
+| 0x480-0x4A4 | 288-297 | 0 | Y | Reserved | — |
 
 ## Zone 0x4A8 — L3 / Cache Metrics
 
@@ -334,7 +338,41 @@ followed by its live value in the *same* unit. See
 ### Core C6 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x574-0x590 | 349-356 | 75-92 idle / 0.0 load | N | **Core C6 Residency (%) [8]** | CONFIRMED (collapses to exactly 0 under all-core load) |
+| 0x574-0x590 | 349-356 | 11-92 idle / 0.0 load | N | **Core C6 Residency (%) [8]** | CONFIRMED as a per-core idle-residency metric (exactly 0 under all-core load); the absolute idle value is not reproducible and is **not** the kernel's C-state residency |
+
+The idle figure has no fixed value. The map first recorded 84-93 % as if it were a
+property of the field, and `audit_map.py` checked `> 50 %` against it; that gate failed
+the moment the audit ran on a machine with a browser open, where it reads 27-33 %.
+
+The kernel's deep-idle accounting in `/sys/devices/system/cpu/cpu*/cpuidle/state3/time`
+is the obvious candidate for a cross-check, and it is close but not equal. Measured in
+the same windows on a quiet desktop:
+
+| Kernel `state3` (per thread) | `d[349-356]` mean | `d[349]` .. `d[356]` |
+|---|---|---|
+| 84.5 % | 74.1 % | 61 88 84 87 62 92 61 58 |
+| 87.9 % | 68.6 % | 52 92 93 90 6 92 92 30 |
+| 88.7 % | 70.8 % | 50 93 85 92 67 89 32 58 |
+
+Same ballpark, with the PM field running 10-20 points below — expected, because the
+kernel counts time the governor spent *in* the C3 state per thread, while CC6 needs both
+SMT siblings idle simultaneously and for long enough to be worth power-gating. So it is
+a corroboration, not a calibration.
+
+Two things make it useless as a tight gate:
+
+- **Per-core values are very noisy window to window** (`d[353]` reads 62, 6, 67 in three
+  consecutive 3 s windows) because background desktop activity lands on whichever core
+  the scheduler picks. An earlier set of samples taken with a browser running read 11-92 %
+  per core against a kernel figure of 93 %, which is what made the two look unrelated.
+- **The sampler perturbs its own measurement.** A polling loop keeps waking the thread it
+  runs on, so that thread's physical core never reaches CC6 even though the kernel still
+  reports its sibling as idle. Pinning the sampler to `cpu0` drops `d[349]` from ~89 % to
+  55-67 % reproducibly while the other cores stay high. Same family of observer effect as
+  the `pm_table` read-order bias above.
+
+So the audit gates only on what is a property of the field: ~0 with every core pinned,
+clearly above that at idle.
 
 ### Core C0 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
@@ -419,7 +457,7 @@ followed by its live value in the *same* unit. See
 | 0x70C | 451 | ~5.44 | N | Average Core Frequency (GHz) | HIGH |
 | 0x710 | 452 | 22 724 load → 29 514 idle | N | Bounded credit that **decreases** under load and refills at idle — same direction as d[16] (r = +0.94), opposite d[212]/d[453] (r = −0.77 / −0.96). Not an energy total, and not a rescaled d[16] either (their span-normalised traces differ by up to 0.50) | LOW (was "Total Package Energy Accumulator / HIGH"; the earlier note calling d[212] "the real energy accumulator" is also wrong — d[212] does not accumulate) |
 | 0x714 | 453 | 862 idle → 13 517 @16 thr | N | Monotonic in load and the closest field to power-proportional: d[453] / d[20] holds at 103-106 for 4, 8 and 16 threads (2.7 % spread) but collapses to 55-88 below that, so it is not a clean unit conversion of package power. Does not accumulate. Fills under load and drains at idle, paired with d[212] (r = +0.71) and anti-correlated with the d[16]/d[452] credits (r = −0.89 / −0.96) | MED |
-| 0x718 | 454 | 0 | Y | Reserved | — |
+| 0x718 | 454 | 0, rare ~1e-05 at idle | N | Near-zero floor rather than a true zero — same idle-only pattern as d[284]/d[287] but three orders of magnitude smaller (max 1.75e-05 over 40 samples). Unidentified | LOW (was "Reserved") |
 | 0x71C | 455 | ~5.43 | N | Effective Frequency (GHz) | HIGH |
 | 0x720 | 456 | ~35.3 | N | Ambient / Board Temp (°C) | MED |
 
@@ -508,7 +546,7 @@ Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `
 | d[108] iGPU sclk | 647MHz | amdgpu freq1 | 600MHz | YES (PM more precise) |
 | d[317-324] Core temps | 37-40°C | k10temp range | reasonable | YES |
 | d[20] Pkg Power | 14.8-110W | stress profile | coherent | YES |
-| d[349-356] C6 Residency | 93%→0.5% | stress-ng load | perfect inverse | YES |
+| d[349-356] C6 Residency | 93%→0.5% | stress-ng load | perfect inverse; idle value is background-dependent, see above | YES |
 | d[333-340] Core Power | 0.4→5.4W | Pkg Power split | coherent | YES |
 | d[554-570] FIT/IDD | 7→99% | full load | coherent | YES |
 | d[11] 0x02C Tctl | 49.3→82.8°C | k10temp Tctl | 49.4→84.0°C | YES — see the read-order note below |
@@ -534,8 +572,16 @@ the quantity being validated. Over 60 paired reads at idle, `k10temp − d[11]` 
 Reading `pm_table` costs an SMU mailbox transfer, and that transfer warms the die
 enough to show up in the very next sensor read — then decays over a few hundred ms.
 So **always read the external sensor first**, or the tool measures its own cost.
-`research/audit_map.py` does. The +2.1 °C that survives is the genuine offset between
-the two paths; anything above that was self-inflicted.
+`research/audit_map.py` does.
+
+The +2.14 °C that survives is **not** a sensor offset, which is what this section first
+claimed. Those 60 pairs were taken after a stress load, and the delta decays with the
+die: six back-to-back 25-sample windows gave +7.34, +5.02, +3.36, +2.13, +1.44, +1.01 °C.
+Tracked to genuine equilibrium it lands at **+0.12 / +0.18 °C** — the two sensors agree.
+Every larger figure is a thermal transient, or a background-activity spike that k10temp
+catches and the PM table sample misses. The read-order effect above is real and worth
+avoiding; the residual is just "you measured while it was still cooling", which is why
+`wait_cool()` now requires two consecutive stable windows of burst medians.
 
 ### Re-verification 2026-07-30
 

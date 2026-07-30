@@ -14,6 +14,7 @@ Run: python3 research/audit_map.py
 Exit code 1 if any claim fails.
 """
 
+import glob
 import re
 import struct
 import subprocess
@@ -56,10 +57,13 @@ def avg_table(n=25, gap=0.12):
     SMU transfer, and that transfer warms the die enough to show up in the very next
     sensor read: measured over 60 pairs, k10temp minus d[11] is +4.51 C when k10temp
     is read second but +2.14 C when it is read first, and the spread collapses from
-    6.5 C to 2.8 C. The +2.1 C that remains is the genuine offset between the two.
+    6.5 C to 2.8 C. That residual is not a sensor offset — at genuine thermal
+    equilibrium the two agree to ~0.15 C. It is cooldown: those runs followed a
+    stress load, and the delta decays over about two minutes. Hence wait_cool().
     """
     cols = [[] for _ in range(457)]
     k10 = []
+    c6_before = cpuidle_deep()
     for _ in range(n):
         k10.append(float(rd(f"{K10}/temp1_input")) / 1000)
         with open(PM, "rb") as f:
@@ -67,7 +71,49 @@ def avg_table(n=25, gap=0.12):
         for i, x in enumerate(v):
             cols[i].append(x)
         time.sleep(gap)
-    return [statistics.median(c) for c in cols], statistics.median(k10)
+    return ([statistics.median(c) for c in cols], statistics.median(k10),
+            cpuidle_pct(c6_before, cpuidle_deep()))
+
+
+DEEP_STATE = "/sys/devices/system/cpu/cpu*/cpuidle/state3/time"
+
+
+def cpuidle_deep():
+    """(cumulative deep-idle microseconds summed over CPUs, monotonic time, cpu count).
+
+    state3 is C3 in the kernel's naming, which is the deep package state the SMU
+    counts as CC6. Cumulative counters, so only a difference over a window means
+    anything."""
+    paths = glob.glob(DEEP_STATE)
+    return sum(int(rd(p)) for p in paths), time.monotonic(), len(paths)
+
+
+def cpuidle_pct(before, after):
+    """Deep-idle residency over the window, as a percentage, from the kernel's own
+    accounting.
+
+    Printed for context, NOT used as ground truth for d[349-356]. It corroborates the
+    field — on a quiet desktop the kernel reads 84-89 % against a PM mean of 68-74 % —
+    but it cannot calibrate it. The kernel counts per-thread time in the C3 state; CC6
+    needs both SMT siblings idle at once, so the PM figure sits 10-20 points lower. And
+    the sampling loop keeps its own core out of CC6, which costs that core ~30 points.
+    See the C6 section of PM_TABLE_MAP.md."""
+    (a, ta, n), (b, tb, _) = before, after
+    if not n or tb <= ta:
+        return None
+    return (b - a) / 1e6 / (tb - ta) / n * 100
+
+
+def cpufreq_ghz():
+    """Per-CPU current frequency in GHz, skipping CPUs without a cpufreq directory."""
+    out = []
+    for c in range(16):
+        try:
+            out.append(float(rd(f"/sys/devices/system/cpu/cpu{c}/cpufreq/scaling_cur_freq"))
+                       / 1e6)
+        except OSError:
+            pass
+    return out
 
 
 def raw_table():
@@ -104,24 +150,40 @@ print(f"Parsed {len(rows)} documented rows from PM_TABLE_MAP.md "
       f"covering {len({i for r in rows for i in r[0]})} float indices\n")
 
 # ---------------------------------------------------------------- measure
-def wait_cool(max_wait=420, window=30, tol=0.5, max_load=1.0):
-    """Block until the machine is genuinely idle: Tctl stable AND load average low.
+def k10_burst(n=15, gap=0.12):
+    """Median Tctl over a short burst. A single read is not usable as a stability
+    probe: at idle k10temp swings several degrees on background activity alone —
+    46.6 C and 64.6 C twenty seconds apart on an otherwise idle desktop."""
+    return statistics.median(
+        float(rd(f"{K10}/temp1_input")) / 1000 for _ in range(n) if not time.sleep(gap))
 
-    Two conditions, because either alone is not enough. A fixed sleep is not enough
-    (the die sheds heat for minutes after a stress run). Temperature stability alone
-    is not enough either — during a transient, d[11] and k10temp disagree by up to
-    8 C simply because they respond at different rates, which reads as a mismatch
-    that is really just "you measured during cooldown".
+
+def wait_cool(max_wait=420, window=20, tol=0.5, max_load=1.0, stable_needed=2):
+    """Block until the machine is genuinely idle: Tctl steady AND load average low.
+
+    Both conditions, because neither alone is enough. A fixed sleep is not enough —
+    the die sheds heat for minutes after a stress run. Temperature alone is not
+    enough either: during a transient d[11] and k10temp disagree by several degrees
+    purely because they are sampled at different instants of a moving temperature,
+    which reads as a sensor mismatch when it is really "you measured during
+    cooldown". At true equilibrium the two agree to about 0.15 C.
+
+    Compares burst medians rather than instantaneous reads, and requires two
+    consecutive stable windows, because one background spike can otherwise either
+    fake instability or — if it lands in both samples — fake stability.
     """
     deadline = time.time() + max_wait
-    prev = float(rd(f"{K10}/temp1_input")) / 1000
+    prev = k10_burst()
+    stable = 0
+    load1 = float(rd("/proc/loadavg").split()[0].replace(",", "."))
     while time.time() < deadline:
         time.sleep(window)
-        cur = float(rd(f"{K10}/temp1_input")) / 1000
+        cur = k10_burst()
         load1 = float(rd("/proc/loadavg").split()[0].replace(",", "."))
-        if abs(prev - cur) < tol and load1 < max_load:
-            return cur, load1
+        stable = stable + 1 if (abs(prev - cur) < tol and load1 < max_load) else 0
         prev = cur
+        if stable >= stable_needed:
+            return cur, load1
     return prev, load1
 
 
@@ -133,7 +195,7 @@ print(f"  settled at {cool_t:.1f} C, load average {cool_l:.2f}")
 idle_vddgfx = float(rd(f"{AMDGPU}/in0_input")) / 1000
 idle_vddnb = float(rd(f"{AMDGPU}/in1_input")) / 1000
 idle_sclk = float(rd(f"{AMDGPU}/freq1_input")) / 1e6
-idle, idle_k10 = avg_table()
+idle, idle_k10, idle_c6 = avg_table()
 idle_raws = [raw_table() for _ in range(5)]
 
 print("Sampling LOAD (stress-ng --cpu 16, 45 s settle) ...")
@@ -142,7 +204,8 @@ p = subprocess.Popen(
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
 )
 time.sleep(45)
-load, load_k10 = avg_table()
+load, load_k10, load_c6 = avg_table()
+load_cpufreq = cpufreq_ghz()   # must be read before stress-ng exits, see the check below
 p.wait()
 print(f"  Tctl {idle_k10:.1f} -> {load_k10:.1f} C\n")
 
@@ -219,11 +282,25 @@ for _ in range(40):
     pm_v.append(raw_table()[49])
     sys_v.append(float(rd(f"{AMDGPU}/in0_input")) / 1000)
     time.sleep(0.15)
+# 35 mV, not 20: over eight consecutive 40-sample windows the absolute delta ran
+# 0.9-22.0 mV (median 6.0), so a 20 mV gate sits on top of the noise and fails
+# intermittently on nothing. A genuinely mislabelled field here would be volts out, not
+# millivolts.
 xval("XVAL", "d[49] Vcore P1 vs amdgpu vddgfx (40-sample means)",
-     statistics.mean(pm_v), statistics.mean(sys_v), 0.02, "V")
+     statistics.mean(pm_v), statistics.mean(sys_v), 0.035, "V")
 xval("XVAL", "d[53] VDDCR_SoC vs amdgpu vddnb", idle[53], idle_vddnb, 0.02, "V")
 xval("XVAL", "d[58] VDDIO_MEM vs DDR5 nominal", idle[58], 1.1, 0.05, "V")
 xval("XVAL", "d[108] iGPU sclk vs amdgpu freq1", idle[108], idle_sclk, 60, "MHz")
+
+# Domain isolation: a pure CPU load must not move the iGPU block. If it does, either
+# the offsets are not iGPU at all or the two domains share a rail. This is the one
+# check tools/verify_map.py had that nothing else did; folded in here because that
+# script kept its own copy of the labels, which then had to be corrected by hand
+# every time the map changed.
+xval("XVAL", "d[107] iGPU power under CPU load (must stay flat)",
+     load[107], idle[107], 2.0, "W")
+xval("XVAL", "d[108] iGPU clock under CPU load (must stay flat)",
+     load[108], idle[108], 50, "MHz")
 xval("XVAL", "d[11] Tctl vs k10temp (idle)", idle[11], idle_k10, 3.0, "C")
 xval("XVAL", "d[11] Tctl vs k10temp (load)", load[11], load_k10, 3.0, "C")
 
@@ -231,30 +308,34 @@ core_t = [load[317 + i] for i in range(8)]
 xval("XVAL", "d[317-324] core temp max vs k10temp Tctl (load)",
      max(core_t), load_k10, 8.0, "C")
 
-# per-core frequency vs cpufreq
-cur = []
-for c in range(16):
-    try:
-        cur.append(float(rd(f"/sys/devices/system/cpu/cpu{c}/cpufreq/scaling_cur_freq")) / 1e6)
-    except OSError:
-        pass
-if cur:
+# per-core frequency vs cpufreq — load_cpufreq is captured while stress-ng is still
+# running. Reading it here would compare a load-window PM sample against idle
+# frequencies: stress-ng has already exited by this point in the script, and the check
+# only passed because an idle core briefly boosting to ~5.4 GHz happens to look like a
+# loaded one.
+if load_cpufreq:
     pm_f = [load[325 + i] for i in range(8)]
     xval("XVAL", "d[325-332] core freq max vs cpufreq max (load)",
-         max(pm_f), max(cur), 0.6, "GHz")
+         max(pm_f), max(load_cpufreq), 0.6, "GHz")
 
 maxf = float(rd("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")) / 1e6
 xval("XVAL", "d[373-380] boost limit vs cpuinfo_max_freq",
      max(load[373 + i] for i in range(8)), maxf, 0.15, "GHz")
 
-# C6 residency should be high at idle, collapse under load
+# C6 residency, against the kernel's own idle accounting rather than a fixed
+# threshold: the absolute idle figure tracks whatever else is running on the desktop
+# (33% with a browser open, 75% quiet), so only the agreement is a property of d[349].
 c6_idle = statistics.mean(idle[349 + i] for i in range(8))
 c6_load = statistics.mean(load[349 + i] for i in range(8))
-print(f"  {'ok  ' if c6_idle > 50 and c6_load < 10 else 'FAIL'} "
-      f"d[349-356] C6 residency: idle {c6_idle:.1f}% -> load {c6_load:.1f}%")
-if not (c6_idle > 50 and c6_load < 10):
-    fail("XVAL", f"C6 residency idle {c6_idle:.1f}% load {c6_load:.1f}% "
-                 "does not match documented 84-93 -> 0.5")
+# Only the behaviour is checkable: it must be ~0 with every core pinned, and clearly
+# above that at idle. The absolute idle figure is not a property of the field.
+c6_ok = c6_load < 5.0 and c6_idle > c6_load + 10.0
+print(f"  {'ok  ' if c6_ok else 'FAIL'} d[349-356] C6 residency: "
+      f"idle {c6_idle:.1f}% -> load {c6_load:.1f}% "
+      f"(kernel cpuidle for reference: {idle_c6:.1f}% -> {load_c6:.1f}%)")
+if not c6_ok:
+    fail("XVAL", f"C6 residency {c6_idle:.1f}% idle / {c6_load:.1f}% load: expected "
+                 "~0 under all-core load and clearly higher at idle")
 
 # d[212] is documented as a load-proportional rate that PLATEAUS under steady load,
 # not as a running total. Test that: under constant load it must not climb.

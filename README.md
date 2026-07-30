@@ -80,6 +80,12 @@ Two measurement lessons from building it are worth stealing if you write your ow
 - **Use medians over a window, and compare sensors sampled in the *same* window.**
   Occasional garbage sysfs reads wreck a mean, and a reading taken before or after the
   window is a different point on a thermal transient.
+- **Wait for equilibrium, and prove it with two stable windows, not one.** A sensor
+  disagreement of a few degrees is almost always cooldown, not calibration: after a
+  stress load the `k10temp` − `d[11]` delta decays +7.3 → +1.0 °C over a couple of
+  minutes and only then settles at +0.15 °C. Single instantaneous reads cannot tell
+  that apart from noise — at idle `k10temp` alone swings 46.6 → 64.6 °C on background
+  activity.
 
 ## Tools
 
@@ -91,6 +97,7 @@ sudo python3 tools/gnr_master.py          # menu-driven CLI for limits and Curve
 sudo python3 tools/export_telemetry.py    # 5 JSON snapshots
 sudo python3 tools/export_telemetry.py --csv
 sudo python3 tools/export_telemetry.py --live 2   # append a CSV row every 2 s
+sudo python3 tools/dump_table_full.py      # all 457 floats, labelled from the map
 ```
 
 SMU control uses MP1 mailbox **message IDs** (not table offsets): `0x3E` PPT,
@@ -100,9 +107,17 @@ implies, which is why they are commented at every call site. Curve Optimizer is
 write-only — the SMU will not read the offsets back, so the tools cache them locally
 in `$XDG_CONFIG_HOME/gnr_master.json` to keep the display honest.
 
-`research/` holds the measurement scripts. The ones worth reading are `audit_map.py`,
-`hunt_edc.py` (the exhaustive EDC search), `profile_demoted.py` and
-`transient_demoted.py`; the rest is archived fuzzing from the initial mapping.
+`research/` holds the measurement scripts, one per question asked: `audit_map.py`
+(the map's regression gate), `recheck_zone0.py` / `recheck_sweep.py` / `recheck_edc.py`
+(the zone 0x000 correction), `hunt_edc.py` (the exhaustive EDC search),
+`classify_unknown.py`, `profile_load.py`, `profile_demoted.py` and
+`transient_demoted.py`. `smu_send.py` and `smu_advanced.py` are standalone MP1/RSMU
+mailbox tools.
+
+`dump_table_full.py` prints the whole table with each field's documented meaning and
+confidence, read from `PM_TABLE_MAP.md` itself. On unvalidated hardware it drops the
+labels and prints raw values — that dump, plus your CPU model, is exactly what the map
+needs to grow past one machine.
 
 ## Requirements
 
@@ -118,8 +133,8 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   wrong number; writing a limit *derived* from a wrong field pushes it into the SMU.
   That has already happened here once — the thermal limit (88 °C) was read as TDC and
   pre-filled the write dialog as 88 A. Hence the hardware gate.
-- **The GUI blocks message IDs `0x03`-`0x0D` and `0x10`** outright, and that should
-  stay. `0x58`-`0x5D` freeze MP1 on this part; do not probe them.
+- **Both front-ends block message IDs `0x03`-`0x0D` and `0x10`** outright, and that
+  should stay. `0x58`-`0x5D` freeze MP1 on this part; do not probe them.
 - Stock limits for the 9800X3D are 162 W PPT / 120 A TDC / 180 A EDC. The reset paths
   send exactly those.
 - 3D V-Cache runs under a tighter thermal ceiling than the rest of the die. The
