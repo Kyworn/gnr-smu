@@ -37,7 +37,7 @@ followed by its live value in the *same* unit. See
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
 | 0x040 | 16 | ~1900 | N | Energy Budget / Countdown Counter (↓ under stress) | MED |
-| 0x044 | 17 | ~0.6 | N | **Core Power Aggregate (W)** | CONFIRMED (stress: 0.7→64.5) |
+| 0x044 | 17 | 0.7 idle → ~114 @8 thr → ~47 @16 thr | N | **Not** a core power aggregate — it exceeds package power in 36/60 samples at 8 threads (114.2 vs 110.9 W, physically impossible for a subset of the package) and is non-monotonic in load, peaking at 8 threads and falling at 16. Real meaning unknown; the 8-thread peak suggests a per-physical-core metric | LOW (was "Core Power Aggregate (W)" / CONFIRMED) |
 | 0x048 | 18 | ~1.37 | N | **Vcore Peak (V)** | CONFIRMED |
 | 0x04C | 19 | ~1.19 idle → ~1.31 load | N | **Vcore Average (V)** | CONFIRMED |
 | 0x050 | 20 | ~20.5 | N | **Package Power (W)** | CONFIRMED (stress: 17→106) |
@@ -217,7 +217,7 @@ followed by its live value in the *same* unit. See
 | 0x344 | 209 | 90.0 | Y | Thermal Limit (°C) | HIGH |
 | 0x348 | 210 | 15-24 idle / 100 load | N | **Percentage / FIT-style utilization (%)** — saturates hard at 99.94-100.00 under load. **Not a temperature** | HIGH (corrected; a °C field would not pin at exactly 100) |
 | 0x34C | 211 | 3000.0 | Y | MCLK (mirror) | HIGH |
-| 0x350 | 212 | ~1730 idle → ~23200 load | N | Package energy **rate/credit**, not a running total — it plateaus at ~23 200 for the whole of a 50 s steady load instead of climbing, and falls back within seconds of the load ending | MED (was "Package Energy Accumulator (J)" / CONFIRMED — the 2133→19383 jump was an idle→load level change, not accumulation) |
+| 0x350 | 212 | ~1450 idle → ceiling | N | Not a running total (plateaus under steady load) and **not** power-proportional either: it saturates at its ceiling from a *single* busy thread and stays there (1 thr 14536, 4 thr 14696, 8 thr 14528, 16 thr 12906 under `--matrix`), and the ceiling itself is workload-dependent (~23 200 under `--cpu`). Ratio against package power drifts 175 % across load levels. Unidentified | LOW (was "Package Energy Accumulator (J)" / CONFIRMED) |
 | 0x354 | 213 | 12.8 | Y | Current Limit (A?) | MED |
 | 0x358 | 214 | ~3.4 | N | Power Domain (W) | MED |
 | 0x35C | 215 | 4.0 | Y | Scalar / Multiplier | LOW |
@@ -418,7 +418,7 @@ followed by its live value in the *same* unit. See
 | 0x708 | 450 | ~5.43 | N | Peak Core Frequency (GHz) | HIGH |
 | 0x70C | 451 | ~5.44 | N | Average Core Frequency (GHz) | HIGH |
 | 0x710 | 452 | ~29024 → ~22777 | N | Rolling counter — **decreases** under load, so it is a credit/countdown, not an energy total. The real energy accumulator is d[212] (2503 → 23218) | LOW (was "Total Package Energy Accumulator / HIGH") |
-| 0x714 | 453 | ~1550 idle → ~11 620 load | N | Power rate/credit — plateaus under steady load like d[212], does not accumulate | MED |
+| 0x714 | 453 | 862 idle → 13 517 @16 thr | N | Monotonic in load and the closest field to power-proportional: d[453] / d[20] holds at 103-106 for 4, 8 and 16 threads (2.7 % spread) but collapses to 55-88 below that, so it is not a clean unit conversion of package power. Does not accumulate | MED |
 | 0x718 | 454 | 0 | Y | Reserved | — |
 | 0x71C | 455 | ~5.43 | N | Effective Frequency (GHz) | HIGH |
 | 0x720 | 456 | ~35.3 | N | Ambient / Board Temp (°C) | MED |
@@ -547,6 +547,42 @@ under an 88 °C limit. Three fields, three units, each pinned by the limit direc
 **Still open:** no `EDC_VALUE` companion for d[63] was found — `stress-ng --cpu` is an
 integer load and may simply not push EDC high enough to identify the field. Retry with an
 AVX-512 heavy load.
+
+## EDC_VALUE — closed, negative result (2026-07-30)
+
+`d[63]` holds the EDC limit (180 A). **There is no companion live-value float in
+PM table v0x620105.** Searched by `research/hunt_edc.py` at three load points,
+scoring every one of the 457 floats on the signature EDC_VALUE must have: low at
+idle, rising with load, rising *more* under the heavier load, never above 180.
+
+The previous attempt failed because it used `stress-ng --cpu`, an integer load.
+Load choice turned out to matter more than expected, and "use AVX-512" is **not**
+the answer — benchmarked by peak TDC value:
+
+| Load | Peak TDC | Peak pkg W |
+|------|---------|-----------|
+| `--matrix 16` | **103.4 A** | **131.6 W** |
+| `--cpu 16 --cpu-method float128` | 91.8 A | 116.8 W |
+| `--vecfp 16` (AVX-512) | 89.9 A | 105.9 W |
+| `--cpu 16` | 87.7 A | 112.4 W |
+| `--vecshuf 16` | 64.7 A | 82.6 W |
+| `--ipsec-mb 16` | 24.7 A | 30.8 W |
+
+`--vecfp` is AVX-512 and pulls *less* package power than the plain integer path.
+`--matrix` is what actually loads the current rails.
+
+Under `--matrix 16` the part reaches 100.9 A of its 120 A TDC and Tctl pins at
+exactly 88.0 °C — the thermal limit, i.e. as hard as this cooling can push. At
+that point the only floats reading between 100 and 180 are known constants (162 =
+PPT limit, 120 = TDC limit and its copies, 138 = PPT value in **watts**) and
+percentages saturated at 100. Nothing behaves like a current climbing toward 180.
+
+Also ruled out: deriving it. `sum(d[301-308])` (per-core IDD) reaches 113 A, but
+its ratio to the TDC value drifts 0.98→1.20 across load levels, so it is not the
+same quantity in another unit.
+
+Consequence for the GUI: an EDC gauge can only ever show the limit. That is
+already what it does — do not add a computed "EDC value".
 
 ## Honesty Audit 2026-07-30
 
