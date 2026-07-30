@@ -10,7 +10,8 @@ Tools and dynamic telemetry map for AMD Granite Ridge (Zen 5) SMU management, sp
   - **TDC limit:** Mapped to offset `0x3D` (not 0x3C as previously assumed on Zen 4). AMD hardware explicitly prevents runtime modifications of TDC on the 9800X3D for thermal safety.
   - **EDC limit:** Mapped to offset `0x3C`.
   - **Curve Optimizer (CO):** Write-only parameter. Local configuration caching ensures consistency across resets.
-- **PM Table Mapping:** Fully mapped the `0x724` byte telemetry table (457 float32 values). FCLK, UCLK, MCLK, iGPU telemetry (power/clock/activity/current), per-core C-state residency (C0/C1/C6), L3/V-Cache temperatures, Tctl, SoC power/telemetry (voltage offsets d[87], d[95], d[97] are NOT voltage but efficiency/ease metrics), per-core IDD, and energy accumulators — all identified and documented with confidence levels.
+- **PM Table Mapping:** Fully mapped the `0x724` byte telemetry table (457 float32 values). FCLK, UCLK, MCLK, iGPU telemetry (power/clock/activity/current), per-core C-state residency (C0/C1/C6), Tctl, hotspot, SoC power/telemetry (voltage offsets d[87], d[95], d[97] are NOT voltage but efficiency/ease metrics), per-core IDD, and energy accumulators — all identified and documented with confidence levels.
+- **Zone 0x000 is a `(LIMIT, VALUE)` pair layout** — corrected 2026-07-30. PPT at `0x008`/`0x00C` (W), TDC at `0x020`/`0x024` (A), thermal at `0x028`/`0x02C` (°C), EDC limit at `0x0FC`. An earlier revision read these as non-linearly encoded temperatures; they are watts, amps and degrees, and every real temperature in the table reads as **direct °C** with no decoding. See [PM_TABLE_MAP.md](./PM_TABLE_MAP.md#re-verification-2026-07-30).
 - **Telemetry Access:** Real-time data is natively exposed by the `ryzen_smu` driver at `/sys/kernel/ryzen_smu_drv/pm_table`.
 
 ## 🛠 Tools

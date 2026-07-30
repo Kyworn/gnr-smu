@@ -30,12 +30,30 @@ For a complete variable-to-byte mapping, reference **[PM_TABLE_MAP.md](../PM_TAB
 *Notable discoveries via Pearson Correlation + cross-validation:*
 - **iGPU Clock (sclk):** Offset `0x1B0` — validated vs amdgpu freq1_input.
 - **iGPU Power (W):** Offset `0x1AC`.
-- **Core Temperatures (°C):** Offsets `0x4F4-0x510` — only direct °C readings validated in the entire table.
+- **Core Temperatures (°C):** Offsets `0x4F4-0x510` — direct °C, validated vs k10temp.
+- **Tctl (°C):** Offset `0x02C` — direct °C, matches k10temp Tctl within 1.1 °C at idle and at load. Its thermal limit sits at `0x028` (88 °C).
+- **Hotspot (°C):** Offset `0x438` — direct °C, 0-3 °C above Tctl on average, but very spiky (single reads hit +14 °C at idle). Average it. Previously mislabeled "TDC current".
 - **VDDCR_SoC:** Offset `0x0D4` (0.954V) — matches amdgpu vddnb (0.945V, 9mV delta).
 - **Vcore P1:** Offset `0x0C4` (1.213V) — matches amdgpu vddgfx (1.220V).
 - **VDDIO_MEM:** Offset `0x0E8` (1.099V) — matches DDR5 1.1V nominal.
 
-**⚠ Temperature encoding caveat:** Offsets `0x00C`, `0x024`, `0x100`, `0x2E8`, `0x348` are thermal *metrics* with non-linear encoding — they do NOT map 1:1 to °C. Only core temps (`0x4F4-0x510`) are direct °C. Cross-validated against k10temp and amdgpu sysfs.
+**⚠ Corrected 2026-07-30 — there is no "temperature encoding".** Offsets `0x00C`, `0x024`,
+`0x100`, `0x2E8`, `0x348` were previously written up as non-linearly encoded temperatures.
+They are not temperatures at all:
+
+| Offset | Actual |
+|--------|--------|
+| `0x00C` | PPT Value — total package power (W), 28 → 128 W under a 162 W limit |
+| `0x024` | TDC Value — live current (A), 9 → 87 A under a 120 A limit |
+| `0x100` | unidentified utilization metric, quantized to 0.125 steps |
+| `0x2E8` | iGPU activity (%), complement at `0x2EC` (pair sums to 100) |
+| `0x348` | percentage, saturates at exactly 100 under load |
+
+Zone `0x000` is the standard Zen `(LIMIT, VALUE)` pair layout — `0x008`/`0x00C` = PPT,
+`0x020`/`0x024` = TDC, `0x028`/`0x02C` = THM. Each value shares the unit of the limit above
+it, which is what pins the identification. Every field in the table that *is* a temperature
+reads as direct °C; no decoding is required. Full measurements and the before/after label
+table are in [PM_TABLE_MAP.md](../PM_TABLE_MAP.md#re-verification-2026-07-30).
 
 ---
 

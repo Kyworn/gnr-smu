@@ -7,19 +7,24 @@
 
 ---
 
-## Zone 0x000 — Power Limits & Core Temperatures
+## Zone 0x000 — Classic Zen (LIMIT, VALUE) Pairs
+
+**⚠ Corrected 2026-07-30** — this zone was previously mislabeled as temperatures.
+It is the standard Zen `(LIMIT, VALUE)` pair layout: each limit is immediately
+followed by its live value in the *same* unit. See
+[Re-verification 2026-07-30](#re-verification-2026-07-30) for the measurements.
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x000 | 0 | 0 | Y | Reserved | CONFIRMED |
-| 0x004 | 1 | 0 | Y | Reserved | CONFIRMED |
+| 0x000 | 0 | 0 | Y | STAPM Limit (0 on desktop) | CONFIRMED |
+| 0x004 | 1 | 0 | Y | STAPM Value (0 on desktop) | CONFIRMED |
 | 0x008 | 2 | 162.0 | Y | **PPT Limit (W)** | CONFIRMED |
-| 0x00C | 3 | ~37.3 | N | **Package Thermal Metric** (encoded, stress=128, NOT direct °C) | CONFIRMED (struct=PACKAGE_TEMP, but values non-linear) |
-| 0x010 | 4-7 | 0 | Y | Reserved | CONFIRMED |
-| 0x020 | 8 | 120.0 | Y | **EDC Limit (A)** | CONFIRMED |
-| 0x024 | 9 | ~17.0 | N | **SoC Temperature Metric** (encoded, stress=86, struct=SOC_TEMP) | CONFIRMED (struct, but non-linear vs °C) |
-| 0x028 | 10 | 85.0 | Y | **TDC Limit (A)** | CONFIRMED |
-| 0x02C | 11 | ~51.0 | N | VRM / Hotspot Temperature (°C) | HIGH |
+| 0x00C | 3 | 28 idle / 128 load | N | **PPT Value — total package power (W)** | CONFIRMED (idle 27.9 → load 128.2 W, ceiling = 162 limit; equals d[20] + ~17 W uncore/SoC at a constant offset) |
+| 0x010 | 4-7 | 0 | Y | Reserved (fast/slow PPT pair, unused) | CONFIRMED |
+| 0x020 | 8 | 120.0 | Y | **TDC Limit (A)** — 9800X3D stock TDC is 120 A | CONFIRMED |
+| 0x024 | 9 | 9 idle / 87 load | N | **TDC Value — live current (A)** | CONFIRMED (idle 9.3 → load 86.7 A, ceiling = 120 limit) |
+| 0x028 | 10 | 88.0 | Y | **THM Limit (°C)** — thermal limit, *not* a current | CONFIRMED (reads 88.0 on this board; doc previously said 85.0) |
+| 0x02C | 11 | 49 idle / 83 load | N | **THM Value — Tctl (°C), direct reading** | CONFIRMED (slope 0.97 vs k10temp Tctl, absolute match within 1.1 °C at idle *and* load) |
 
 ## Zone 0x030 — Reserved
 
@@ -103,8 +108,8 @@
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
 | 0x0F8 | 62 | ~57.0 | Y | SoC Power Limit (W) | MED |
-| 0x0FC | 63 | 180.0 | Y | **EDC Max (A)** | CONFIRMED |
-| 0x100 | 64 | 65-100 | N | **Thermal Metric** (stagnates 96-100 stress, NOT direct Tctl) | CONFIRMED (stress: idle 65→stress 97, low delta vs k10temp=85°C) |
+| 0x0FC | 63 | 180.0 | Y | **EDC Limit (A)** — 9800X3D stock EDC is 180 A. No companion EDC_VALUE float found; a sweep for an offset rising into 90-182 A under all-core load returned only known power/percent fields | CONFIRMED |
+| 0x100 | 64 | 44-104 | N | Unidentified utilization metric, quantized to 0.125 steps. **Not a temperature** (slope 1.52 vs Tctl, and exceeds 100 in some runs) | LOW (previously mislabeled "Thermal Metric") |
 | 0x104 | 65 | 552.0 | Y | Unknown Frequency/Limit | LOW |
 | 0x108 | 66 | 0 | Y | Reserved | — |
 | 0x10C | 67 | 0 | Y | Reserved | — |
@@ -192,8 +197,8 @@
 | 0x2D4-0x2D8 | 181-182 | 0 | Y | Reserved | — |
 | 0x2DC | 183 | 100.0 | Y | C-State Cap 1 (%) | MED |
 | 0x2E0-0x2E4 | 184-185 | 0 | Y | Reserved | — |
-| 0x2E8 | 186 | 22-80 | N | **GFX Thermal Metric** (encoded, amdgpu edge=47°C vs PM=23°C) | HIGH (Pearson validated, but offset mismatch with amdgpu) |
-| 0x2EC | 187 | inverse of 0x2E8 | N | **GFX Thermal Headroom** (inverse of 0x2E8) | CONFIRMED (stress: 71→29, always sum=100) |
+| 0x2E8 | 186 | ~0.00 idle | N | **iGPU Activity / Busy (%)** — reads 0.003 with iGPU idle, rises a few % under CPU-only load. **Not a temperature** | HIGH (corrected; sums to 100 with 0x2EC) |
+| 0x2EC | 187 | 100 − 0x2E8 | N | **iGPU Idle (%)** — complement of 0x2E8 | CONFIRMED (pair always sums to 100.000) |
 | 0x2F0-0x2F8 | 188-190 | 0 | Y | Reserved | — |
 | 0x2FC | 191 | 100.0 | Y | C-State Cap 2 (%) | MED |
 | 0x300-0x30C | 192-195 | 0 | Y | Reserved | — |
@@ -210,7 +215,7 @@
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
 | 0x344 | 209 | 90.0 | Y | Thermal Limit (°C) | HIGH |
-| 0x348 | 210 | ~31 | N | **CCD Thermal Metric** (encoded, stress=100, k10temp Tccd1=50→85°C) | HIGH (stress reactive, but offset vs k10temp) |
+| 0x348 | 210 | 15-24 idle / 100 load | N | **Percentage / FIT-style utilization (%)** — saturates hard at 99.94-100.00 under load. **Not a temperature** | HIGH (corrected; a °C field would not pin at exactly 100) |
 | 0x34C | 211 | 3000.0 | Y | MCLK (mirror) | HIGH |
 | 0x350 | 212 | ~4094 | N | **Package Energy Accumulator (J)** | CONFIRMED (stress: 2133→19383) |
 | 0x354 | 213 | 12.8 | Y | Current Limit (A?) | MED |
@@ -251,7 +256,7 @@
 | 0x42C | 267 | ~1.03 | N | Live Voltage (V) | MED |
 | 0x430 | 268 | 120.0 | Y | EDC Limit (mirror, A) | HIGH |
 | 0x434 | 269 | 1.148 | Y | SVI3 VDDCR_CPU VID (V) | HIGH |
-| 0x438 | 270 | ~66.0 | N | **TDC Current Value (A)** | CONFIRMED (stress: 73→91) |
+| 0x438 | 270 | 50 idle / 87 load | N | **Hotspot / instantaneous max Temperature (°C)** — *not* TDC current. Slope 1.02 vs k10temp Tctl; mean sits 0-3 °C above it. **Spiky**: unaveraged reads hit 63-90 °C at idle (stdev 2.7 vs 0.6 for k10temp), so always average this field. Real TDC current is d[9] | CONFIRMED (corrected — the old "TDC current" label was swapped with d[9]) |
 | 0x43C | 271 | ~1.26 | N | SVI3 VDDCR_SoC VID (V) | HIGH |
 | 0x440 | 272 | 5.425 | Y | Max Boost Frequency (GHz) | HIGH |
 | 0x444 | 273 | ~0.46 | N | **SoC Telemetry Current/Power Metric** (NOT voltage, Pearson=0.999 with Pkg Power) | CONFIRMED (stress: 0.46→7.98, tracks load not voltage) |
@@ -259,15 +264,15 @@
 | 0x44C | 275 | ~1.20 | N | Live Voltage (V) | MED |
 | 0x450 | 276 | 0.010 | Y | Scalar | LOW |
 | 0x454 | 277 | ~37.3 | N | Pkg Thermal Metric (mirror) | HIGH |
-| 0x458 | 278 | ~50.8 | N | PPT Current Value (W) | HIGH |
+| 0x458 | 278 | ~49 → ~54 | N | Unidentified, near-static. **Not PPT current value** — moves only 49→54 while real package power goes 28→128 W (that is d[3]) | LOW (corrected) |
 | 0x45C-0x4A4 | 279-297 | 0 | Y | Reserved | — |
 
 ## Zone 0x4A8 — L3 / Cache Metrics
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x4A8 | 298 | ~45.6 | N | L3/V-Cache Temp 0 (°C) | HIGH |
-| 0x4AC | 299 | ~46.4 | N | L3/V-Cache Temp 1 (°C) | HIGH |
+| 0x4A8 | 298 | ~44.6 → ~48.4 | N | Slow thermal reading (°C), domain unconfirmed. Rises only 3.8 °C over 60 s of all-core load (slope 0.11 vs Tctl) — too flat for V-Cache. Tracks d[456] at a constant +9.39 offset, so the two share one sensor | LOW (was "L3/V-Cache Temp 0 / HIGH") |
+| 0x4AC | 299 | ~45.4 → ~49.2 | N | Slow thermal reading (°C), same behaviour as d[298] | LOW (was "L3/V-Cache Temp 1 / HIGH") |
 | 0x4B0-0x4B0 | 300 | 0 | Y | Reserved | — |
 
 ## Zone 0x4B4 — Per-Core IDD / Current (8 values)
@@ -406,11 +411,11 @@
 | 0x6F4 | 445 | ~3.1 | N | Package Energy Rate (W) | MED |
 | 0x6F8 | 446 | 0.250 | Y | Scalar | LOW |
 | 0x6FC | 447 | 0.950 | Y | SVI3 Reference Voltage (V) | MED |
-| 0x700 | 448 | ~40.4 | N | Average Core Temp (°C) | HIGH |
-| 0x704 | 449 | ~38.9 | N | Min Core Temp (°C) | HIGH |
+| 0x700 | 448 | ~36.9 → ~55.3 | N | Heavily filtered thermal value (°C), **not** the core-temp average — at 60 s steady load the real core average is 78.3 °C while this reads 55.3 °C | LOW (was "Average Core Temp / HIGH") |
+| 0x704 | 449 | ~35.5 → ~53.4 | N | Same filtered signal as d[448], offset ~−1.9 °C. **Not** min core temp (real min 74.9 °C vs 53.4 °C) | LOW (was "Min Core Temp / HIGH") |
 | 0x708 | 450 | ~5.43 | N | Peak Core Frequency (GHz) | HIGH |
 | 0x70C | 451 | ~5.44 | N | Average Core Frequency (GHz) | HIGH |
-| 0x710 | 452 | ~27825 | N | **Total Package Energy Accumulator (J)** | HIGH |
+| 0x710 | 452 | ~29024 → ~22777 | N | Rolling counter — **decreases** under load, so it is a credit/countdown, not an energy total. The real energy accumulator is d[212] (2503 → 23218) | LOW (was "Total Package Energy Accumulator / HIGH") |
 | 0x714 | 453 | ~1549 | N | Power Accumulator | MED |
 | 0x718 | 454 | 0 | Y | Reserved | — |
 | 0x71C | 455 | ~5.43 | N | Effective Frequency (GHz) | HIGH |
@@ -475,11 +480,52 @@ Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `
 | d[349-356] C6 Residency | 93%→0.5% | stress-ng load | perfect inverse | YES |
 | d[333-340] Core Power | 0.4→5.4W | Pkg Power split | coherent | YES |
 | d[554-570] FIT/IDD | 7→99% | full load | coherent | YES |
-| d[64] 0x100 | 65→97 | k10temp Tctl | 52→85°C | **NO — encoded metric** |
-| d[210] 0x348 | 20→100 | k10temp Tccd1 | 50→85°C | **NO — encoded metric** |
-| d[186] 0x2E8 | 23→80 | amdgpu edge | 47→71°C | **NO — encoded metric** |
+| d[11] 0x02C Tctl | 49.3→82.8°C | k10temp Tctl | 49.4→84.0°C | YES (≤1.1°C delta, slope 0.97) |
+| d[270] 0x438 hotspot | 51.8→87.2°C | k10temp Tctl | 49.4→84.0°C | YES (slope 1.02, sits ~3°C above Tctl) |
+| d[3] 0x00C PPT value | 27.9→128.2W | PPT limit d[2]=162W | ceiling respected | YES (it is watts, not °C) |
+| d[9] 0x024 TDC value | 9.3→86.7A | TDC limit d[8]=120A | ceiling respected | YES (it is amps, not °C) |
+| d[64] 0x100 | 44→97 (and 90→104 in another run) | k10temp Tctl | 49→84°C | **NO — not a temperature at all** |
+| d[210] 0x348 | 15→100.00 (pinned) | k10temp Tccd1 | 38→83°C | **NO — a percentage** |
+| d[186] 0x2E8 | 0.003→0.015 | amdgpu edge | iGPU idle | **NO — iGPU activity %** |
+| d[448] 0x700 | 36.9→55.3 | core temp average d[317-324] | 36.4→78.3°C | **NO — heavily filtered, not the average** |
 
-**Key finding:** Temperature offsets in the PM table use a non-linear encoding that does not map 1:1 to °C. Only **core temperatures (d[317-324])** read as direct °C. Voltages, frequencies, power, and C-state residency are direct readings.
+### Re-verification 2026-07-30
+
+The earlier "non-linear temperature encoding" conclusion was a **misdiagnosis**. Those
+offsets were never temperatures — they are watts, amps and percentages that were being
+compared against k10temp. Re-measured with averaged samples (20 reads per point, 30 s idle
+settle, 60 s steady-state `stress-ng --cpu 16`) using
+`research/recheck_zone0.py`, `research/recheck_sweep.py` and `research/recheck_edc.py`.
+
+**Every PM-table temperature that is a temperature reads as direct °C.** No decoding needed.
+Confirmed direct-°C fields: d[11] (Tctl), d[270] (hotspot), d[317-324] (per-core).
+
+What actually went wrong, and the corrected labels:
+
+| Offset | Old label | Actual |
+|--------|-----------|--------|
+| 0x00C d[3] | Package Thermal Metric (encoded °C) | **PPT Value (W)** |
+| 0x020 d[8] | EDC Limit (A) | **TDC Limit (A)** — 120 A |
+| 0x024 d[9] | SoC Temperature Metric (encoded °C) | **TDC Value (A)** |
+| 0x028 d[10] | TDC Limit (A) | **THM Limit (°C)** — 88 °C |
+| 0x02C d[11] | VRM / Hotspot Temp | **THM Value = Tctl (°C)** |
+| 0x0FC d[63] | EDC Max (A) | **EDC Limit (A)** — 180 A (unchanged, just renamed) |
+| 0x100 d[64] | Thermal Metric | unidentified utilization metric |
+| 0x2E8/0x2EC d[186/187] | GFX Thermal + Headroom | **iGPU Activity / Idle (%)** |
+| 0x348 d[210] | CCD Thermal Metric | percentage, saturates at 100 |
+| 0x438 d[270] | TDC Current Value (A) | **Hotspot Temperature (°C)** |
+| 0x458 d[278] | PPT Current Value (W) | unidentified, near-static |
+| 0x4A8/0x4AC d[298/299] | L3/V-Cache Temp | slow thermal, domain unconfirmed |
+| 0x700/0x704 d[448/449] | Average / Min Core Temp | filtered thermal, not core stats |
+| 0x710 d[452] | Total Package Energy (J) | countdown/credit — decreases under load |
+
+The `(LIMIT, VALUE)` pairing is what makes zone 0x000 unambiguous: 0x00C peaks at 128 W
+under a 162 W limit, 0x024 peaks at 86.7 A under a 120 A limit, and 0x02C peaks at 82.8 °C
+under an 88 °C limit. Three fields, three units, each pinned by the limit directly above it.
+
+**Still open:** no `EDC_VALUE` companion for d[63] was found — `stress-ng --cpu` is an
+integer load and may simply not push EDC high enough to identify the field. Retry with an
+AVX-512 heavy load.
 
 ## Summary Statistics
 
@@ -492,4 +538,4 @@ Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `
 | Reserved / Zero | ~170 |
 | **Total floats mapped** | **457** |
 
-*Note: This map was generated by cross-referencing the ryzen_smu `pm_table_gnr` struct, the Zen 3/4 `pm_table_0x240903` field layout, dynamic analysis (idle/stress/post-stress), Pearson correlation, and cross-validation against k10temp/amdgpu sysfs. Temperature fields (except core temps) use non-linear encoding — treat as relative metrics, not direct °C.*
+*Note: This map was generated by cross-referencing the ryzen_smu `pm_table_gnr` struct, the Zen 3/4 `pm_table_0x240903` field layout, dynamic analysis (idle/stress/post-stress), Pearson correlation, and cross-validation against k10temp/amdgpu sysfs. Zone 0x000 and the "encoded temperature" fields were corrected on 2026-07-30 — see [Re-verification 2026-07-30](#re-verification-2026-07-30). Temperature fields that really are temperatures read as direct °C; the fields previously thought to be encoded temperatures are watts, amps and percentages.*

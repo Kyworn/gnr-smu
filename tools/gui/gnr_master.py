@@ -262,6 +262,8 @@ class GNRMaster(QMainWindow):
         self.core_load_history = [
             collections.deque([0.0] * 20, maxlen=20) for _ in range(8)
         ]
+        # d[270] hotspot is very spiky (single reads jump +14 °C at idle) — smooth it
+        self.hotspot_history = collections.deque([40.0] * 8, maxlen=8)
 
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
@@ -436,15 +438,15 @@ class GNRMaster(QMainWindow):
         mclk_lay.addWidget(self.mclk_lbl)
         status_layout.addWidget(mclk_container)
 
-        l3_container = QWidget()
-        l3_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        l3_lay = QVBoxLayout(l3_container)
-        self.l3_lbl = QLabel("L3/V-Cache:\n-- / -- °C")
-        self.l3_lbl.setStyleSheet(
+        thermal_container = QWidget()
+        thermal_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+        thermal_lay = QVBoxLayout(thermal_container)
+        self.thermal_lbl = QLabel("Tctl: -- °C\nHotspot: -- °C")
+        self.thermal_lbl.setStyleSheet(
             "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
         )
-        l3_lay.addWidget(self.l3_lbl)
-        status_layout.addWidget(l3_container)
+        thermal_lay.addWidget(self.thermal_lbl)
+        status_layout.addWidget(thermal_container)
 
         soc_container = QWidget()
         soc_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
@@ -640,9 +642,13 @@ class GNRMaster(QMainWindow):
         try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
                 d = struct.unpack("<457f", f.read(1828))
-            return d[2], d[10], d[8]
+            # PPT=d[2], TDC=d[8] (0x020), EDC=d[63] (0x0FC). Corrected 2026-07-30:
+            # this used to return d[10] as TDC — that offset is the thermal limit
+            # in °C (88), so the write dialog pre-filled TDC with 88 A and EDC
+            # with 120 A (the real TDC limit).
+            return d[2], d[8], d[63]
         except Exception:
-            return 162.0, 85.0, 120.0
+            return 162.0, 120.0, 180.0
 
     def update_data(self):
         try:
@@ -663,21 +669,25 @@ class GNRMaster(QMainWindow):
                 data = f.read(1828)
                 if len(data) == 1828:
                     d = struct.unpack("<457f", data)
+                    # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected
+                    # 2026-07-30. d[8] is TDC (not EDC), d[10] is the thermal limit
+                    # in °C (not TDC in A), and EDC's limit lives at d[63].
                     self.current_ppt = d[2]
-                    self.current_edc = d[8]
-                    self.current_tdc = d[10]
-                    pkg_pwr = d[20]
+                    self.current_edc = d[63]
+                    self.current_tdc = d[8]
+                    pkg_pwr = d[3]  # PPT value: the figure the PPT limit applies to
 
                     self.power_lbl.setText(
                         f"{pkg_pwr:.2f} W / {self.current_ppt:.2f} W"
                     )
+                    # ponytail: no EDC_VALUE float identified yet, so limit only
                     self.edc_gauge.setValue(
                         self.current_edc, main_text=f"{self.current_edc:.0f} A"
                     )
                     self.tdc_gauge.setValue(
                         self.current_tdc,
                         main_text=f"{self.current_tdc:.0f} A",
-                        bottom_text=f"Now: {d[270]:.1f} A",
+                        bottom_text=f"Now: {d[9]:.1f} A",
                     )
                     self.power_history.append(pkg_pwr)
                     self.power_curve.setData(list(range(100)), list(self.power_history))
@@ -688,8 +698,14 @@ class GNRMaster(QMainWindow):
                         vcore_peak, f"{vcore_peak:.3f} V", f"Avg: {vcore_avg:.3f} V"
                     )
 
-                    # L3/V-Cache temps (direct °C, HIGH confidence)
-                    self.l3_lbl.setText(f"L3/V-Cache:\n{d[298]:.1f} / {d[299]:.1f} °C")
+                    # Tctl + hotspot: direct °C, cross-validated vs k10temp.
+                    # d[298]/d[299] used to be shown here as "L3/V-Cache" but they
+                    # barely move under load — domain unconfirmed, so show real temps.
+                    self.hotspot_history.append(d[270])
+                    hotspot = sum(self.hotspot_history) / len(self.hotspot_history)
+                    self.thermal_lbl.setText(
+                        f"Tctl: {d[11]:.1f} °C\nHotspot: {hotspot:.1f} °C"
+                    )
                     self.soc_lbl.setText(
                         f"SoC: {d[21]:.1f} W / {d[271]:.3f} V (telem: {d[273]:.2f})"
                     )

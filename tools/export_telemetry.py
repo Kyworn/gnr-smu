@@ -22,10 +22,17 @@ CSV_OUTPUT    = "gnr_telemetry.csv"
 # Key named fields: (column_name, float_index, unit)
 NAMED_FIELDS = [
     ("timestamp",        None,  "s"),
+    # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected 2026-07-30.
+    # d[8] is TDC (not EDC) and d[10] is the thermal limit in °C (not TDC in A).
     ("ppt_limit",        2,     "W"),
-    ("edc_limit",        8,     "A"),
-    ("tdc_limit",        10,    "A"),
-    ("pkg_power",        20,    "W"),
+    ("ppt_value",        3,     "W"),    # total package power, incl. SoC/uncore
+    ("tdc_limit",        8,     "A"),
+    ("tdc_value",        9,     "A"),
+    ("thm_limit",        10,    "C"),
+    ("tctl",             11,    "C"),    # direct °C, matches k10temp Tctl
+    ("edc_limit",        63,    "A"),    # 0x0FC = 180 A; no EDC_VALUE field found yet
+    ("hotspot_temp",     270,   "C"),    # direct °C, ~3 °C above Tctl
+    ("pkg_power",        20,    "W"),    # core+L3 domain, ~17 W below ppt_value
 ("soc_power", 21, "W"),
 ("soc_telemetry", 87, "metric"),  # efficiency metric, NOT voltage
 ("soc_telemetry_metric", 95, "unit"),  # NOT voltage, use d[87] or d[53] instead
@@ -36,8 +43,8 @@ NAMED_FIELDS = [
     ("mclk",             79,    "MHz"),
     ("igpu_power",       107,   "W"),
     ("igpu_clock",       108,   "MHz"),
-    ("l3_temp_0",        298,   "C"),
-    ("l3_temp_1",        299,   "C"),
+    ("slow_temp_0",      298,   "C"),   # was "l3_temp_0"; domain unconfirmed, see PM_TABLE_MAP
+    ("slow_temp_1",      299,   "C"),   # was "l3_temp_1"
     ("pkg_energy",       212,   "J"),
 ]
 # Per-core fields (8 cores)
