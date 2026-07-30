@@ -14,8 +14,12 @@ import sys
 import argparse
 import os
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hwgate import hardware_supported  # noqa: E402
+
 PM_TABLE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table"
 VERSION_PATH  = "/sys/kernel/ryzen_smu_drv/pm_table_version"
+
 JSON_OUTPUT   = "gnr_telemetry_dump.json"
 CSV_OUTPUT    = "gnr_telemetry.csv"
 
@@ -68,6 +72,20 @@ def get_pm_version():
         return 0
 
 
+def require_supported_hardware():
+    """Exit rather than export named fields read from unvalidated offsets.
+
+    This used to print a warning and carry on, which is the worst option: the CSV
+    still has a `Package_Power_W` column, it still holds a plausible number, and
+    nothing downstream can tell it came from the wrong offset.
+    """
+    ok, why = hardware_supported()
+    if not ok:
+        sys.exit(f"refusing to export: {why}\n"
+                 f"see tools/hwgate.py — the field names would be wrong, not missing.")
+    print(f"hardware check: {why}")
+
+
 def get_floats():
     with open(PM_TABLE_PATH, "rb") as f:
         data = f.read(1828)
@@ -92,10 +110,8 @@ def floats_to_row(d, ts):
 
 
 def cmd_json():
+    require_supported_hardware()
     ver = get_pm_version()
-    print(f"PM Table version: {hex(ver)}")
-    if ver != 0x620105:
-        print(f"WARNING: unexpected version {hex(ver)}, offsets may be wrong")
     snapshots = []
     print("Capturing 5 snapshots (10 seconds)...")
     for i in range(5):
@@ -119,10 +135,8 @@ def cmd_json():
 
 
 def cmd_csv(live_interval=None):
+    require_supported_hardware()
     ver = get_pm_version()
-    print(f"PM Table version: {hex(ver)}")
-    if ver != 0x620105:
-        print(f"WARNING: unexpected version {hex(ver)}, offsets may be wrong")
 
     fieldnames = [name for name, _, _ in NAMED_FIELDS]
     write_header = not os.path.exists(CSV_OUTPUT) or live_interval is None

@@ -9,7 +9,15 @@ from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
 
-CONFIG_PATH = "/home/zorko/.config/gnr_master.json"
+CONFIG_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+    "gnr_master.json",
+)
+
+# The offsets are validated on one machine only; tools/hwgate.py explains what that
+# means and refuses on anything else.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from hwgate import hardware_supported  # noqa: E402
 
 # --- Color Theme ---
 BG_MAIN = "#121826"
@@ -568,6 +576,10 @@ class GNRMaster(QMainWindow):
             pass
 
     def send_smu_cmd(self, msg_id, arg0=0):
+        ok, why = hardware_supported()
+        if not ok:
+            self.log_msg(f"GUARDRAIL: SMU writes disabled — {why}", "ERROR", ACCENT_RED)
+            return False
         if msg_id == 0x10:
             self.log_msg("FATAL GUARDRAIL: MSG 0x10 BLOCKED", "ERROR", ACCENT_RED)
             return False
@@ -639,6 +651,10 @@ class GNRMaster(QMainWindow):
             self.log_msg(f"CO offsets saved: {self.current_co}", "STATUS", ACCENT_GREEN)
 
     def _read_pm_limits(self):
+        # Stock 9800X3D spec is the fallback: on unvalidated hardware these offsets
+        # hold something else, and this feeds the write dialog's defaults.
+        if not hardware_supported()[0]:
+            return 162.0, 120.0, 180.0
         try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
                 d = struct.unpack("<457f", f.read(1828))
@@ -651,18 +667,15 @@ class GNRMaster(QMainWindow):
             return 162.0, 120.0, 180.0
 
     def update_data(self):
-        try:
-            with open("/sys/kernel/ryzen_smu_drv/pm_table_version", "rb") as f:
-                ver = struct.unpack("<I", f.read(4))[0]
-                if ver != 0x620105:
-                    self.log_msg(
-                        f"PM TABLE VERSION MISMATCH: Expected 0x620105, got {hex(ver)}. Offsets corrupted!",
-                        "ERROR",
-                        ACCENT_RED,
-                    )
-                    return
-        except Exception:
-            pass
+        ok, why = hardware_supported()
+        if not ok:
+            # update_data runs on a timer; log the refusal once, not every tick.
+            if not getattr(self, "_hw_warned", False):
+                self._hw_warned = True
+                self.log_msg(f"UNVALIDATED HARDWARE: {why}. Telemetry and SMU writes "
+                             f"disabled — the offsets would be wrong, not missing.",
+                             "ERROR", ACCENT_RED)
+            return
 
         try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
