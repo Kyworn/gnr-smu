@@ -39,7 +39,7 @@ followed by its live value in the *same* unit. See
 | 0x040 | 16 | ~1900 | N | Energy Budget / Countdown Counter (↓ under stress) | MED |
 | 0x044 | 17 | ~0.6 | N | **Core Power Aggregate (W)** | CONFIRMED (stress: 0.7→64.5) |
 | 0x048 | 18 | ~1.37 | N | **Vcore Peak (V)** | CONFIRMED |
-| 0x04C | 19 | ~1.22 | Y | **Vcore Average (V)** | CONFIRMED |
+| 0x04C | 19 | ~1.19 idle → ~1.31 load | N | **Vcore Average (V)** | CONFIRMED |
 | 0x050 | 20 | ~20.5 | N | **Package Power (W)** | CONFIRMED (stress: 17→106) |
 | 0x054 | 21 | ~6.1 | N | SoC Power (W) | HIGH |
 | 0x058 | 22 | ~5.8 | N | VDDCR_CPU Telemetry Power (W) | MED |
@@ -56,7 +56,7 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x068 | 26 | ~37.3 | N | Pkg Thermal Metric (mirror of 0x00C) | HIGH |
+| 0x068 | 26 | ~26 | N | Near-copy of d[3] PPT Value (W) — tracks it but is **not** identical (max delta 2.54 W over 120 samples) | MED (was "Pkg Thermal Metric / mirror") |
 | 0x06C | 27 | ~5.44 | N | CPPC Max / DPM Freq [0] (GHz) | MED |
 | 0x070 | 28 | ~5.44 | N | CPPC Max / DPM Freq [1] (GHz) | MED |
 | 0x074 | 29 | ~5.44 | N | CPPC Max / DPM Freq [2] (GHz) | MED |
@@ -88,9 +88,9 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x0C0 | 48 | ~1.22 | Y | Vcore Set Voltage (V) | HIGH |
-| 0x0C4 | 49 | ~1.21 | Y | Vcore P1 Voltage (V) | HIGH |
-| 0x0C8 | 50 | ~17.0 | N | SoC Thermal Metric (mirror of 0x024) | HIGH |
+| 0x0C0 | 48 | ~1.19 idle → ~1.31 load | N | Vcore Set Voltage (V) | HIGH |
+| 0x0C4 | 49 | ~1.19 idle → ~1.28 load | N | Vcore P1 Voltage (V) | HIGH (mean delta vs amdgpu vddgfx +4.3 mV over 60 paired samples; **do not compare single reads** — vddgfx alone swings 1.010-1.250 V at idle, so instantaneous pairs diverge by up to 200 mV) |
+| 0x0C8 | 50 | ~7.0 | N | Near-copy of d[9] TDC Value (A) — tracks it but is **not** identical (max delta 2.07 A over 120 samples) | MED (was "SoC Thermal Metric / mirror") |
 | 0x0CC | 51 | ~20.5 | N | Pkg Power (mirror of 0x050) | HIGH |
 | 0x0D0 | 52 | ~56.9 | N | Accumulated Metric / Temp | MED |
 | 0x0D4 | 53 | 0.954 | Y | VDDCR_SoC Set Voltage (V) | HIGH |
@@ -107,7 +107,7 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x0F8 | 62 | ~57.0 | Y | SoC Power Limit (W) | MED |
+| 0x0F8 | 62 | 49 idle → 56 load | N | SoC Power Limit (W) — the limit itself is re-negotiated with load, so not static | MED |
 | 0x0FC | 63 | 180.0 | Y | **EDC Limit (A)** — 9800X3D stock EDC is 180 A. No companion EDC_VALUE float found; a sweep for an offset rising into 90-182 A under all-core load returned only known power/percent fields | CONFIRMED |
 | 0x100 | 64 | 44-104 | N | Unidentified utilization metric, quantized to 0.125 steps. **Not a temperature** (slope 1.52 vs Tctl, and exceeds 100 in some runs) | LOW (previously mislabeled "Thermal Metric") |
 | 0x104 | 65 | 552.0 | Y | Unknown Frequency/Limit | LOW |
@@ -217,12 +217,14 @@ followed by its live value in the *same* unit. See
 | 0x344 | 209 | 90.0 | Y | Thermal Limit (°C) | HIGH |
 | 0x348 | 210 | 15-24 idle / 100 load | N | **Percentage / FIT-style utilization (%)** — saturates hard at 99.94-100.00 under load. **Not a temperature** | HIGH (corrected; a °C field would not pin at exactly 100) |
 | 0x34C | 211 | 3000.0 | Y | MCLK (mirror) | HIGH |
-| 0x350 | 212 | ~4094 | N | **Package Energy Accumulator (J)** | CONFIRMED (stress: 2133→19383) |
+| 0x350 | 212 | ~1730 idle → ~23200 load | N | Package energy **rate/credit**, not a running total — it plateaus at ~23 200 for the whole of a 50 s steady load instead of climbing, and falls back within seconds of the load ending | MED (was "Package Energy Accumulator (J)" / CONFIRMED — the 2133→19383 jump was an idle→load level change, not accumulation) |
 | 0x354 | 213 | 12.8 | Y | Current Limit (A?) | MED |
 | 0x358 | 214 | ~3.4 | N | Power Domain (W) | MED |
 | 0x35C | 215 | 4.0 | Y | Scalar / Multiplier | LOW |
 | 0x360 | 216 | ~1.03 | N | Live Voltage (V) | MED |
-| 0x364-0x380 | 217-224 | 400.0 | Y | Min DPM Frequency [8] (MHz) | HIGH |
+| 0x364-0x36C | 217-219 | 400.0 | Y | Min DPM Frequency (MHz) | HIGH |
+| 0x370 | 220 | ~199-213 | N | **Not** part of the Min-DPM block — reads ~200, not 400, and drifts with load (202 → 213). Unidentified | LOW (was folded into the 400 MHz Min-DPM row) |
+| 0x374-0x380 | 221-224 | 400.0 | Y | Min DPM Frequency (MHz) | HIGH |
 | 0x384 | 225 | 0.600 | Y | Min DPM Voltage (V) | MED |
 | 0x388 | 226 | ~0.09 | N | Minor Power Domain (W) | LOW |
 | 0x38C | 227 | 48.0 | Y | VRM Temp Limit (°C) | MED |
@@ -244,8 +246,8 @@ followed by its live value in the *same* unit. See
 | 0x410 | 260 | 0 | Y | Reserved | — |
 | 0x414 | 261 | ~0.905 | N | SoC Voltage Rail (mirror) | MED |
 | 0x418 | 262 | 0 | Y | Reserved | — |
-| 0x41C | 263 | 32.0 | Y | Thread Count / Topology | MED |
-| 0x420 | 264 | 16.0 | Y | Core Count | MED |
+| 0x41C | 263 | 32.0 | Y | **Not** this SKU's thread count — the 9800X3D has 16 threads. Reads 32, i.e. a silicon/socket maximum or a topology constant | LOW (was "Thread Count" / MED) |
+| 0x420 | 264 | 16.0 | Y | **Not** this SKU's core count — the 9800X3D has 8 cores. Reads 16, same silicon-maximum pattern as d[263] | LOW (was "Core Count" / MED) |
 | 0x424 | 265 | 5.5 | Y | Parameter (W or ratio) | LOW |
 | 0x428 | 266 | 4.0 | Y | Parameter (scalar) | LOW |
 
@@ -263,7 +265,7 @@ followed by its live value in the *same* unit. See
 | 0x448 | 274 | ~5.44 | N | Core Boost Limit Mirror (GHz) | HIGH |
 | 0x44C | 275 | ~1.20 | N | Live Voltage (V) | MED |
 | 0x450 | 276 | 0.010 | Y | Scalar | LOW |
-| 0x454 | 277 | ~37.3 | N | Pkg Thermal Metric (mirror) | HIGH |
+| 0x454 | 277 | ~26 | N | Near-copy of d[3] PPT Value (W) — tracks it but is **not** identical (max delta 11.7 W over 120 samples) | MED (was "Pkg Thermal Metric / mirror") |
 | 0x458 | 278 | ~49 → ~54 | N | Unidentified, near-static. **Not PPT current value** — moves only 49→54 while real package power goes 28→128 W (that is d[3]) | LOW (corrected) |
 | 0x45C-0x4A4 | 279-297 | 0 | Y | Reserved | — |
 
@@ -380,14 +382,14 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
-| 0x634 | 397 | ~830 | N | Core 0 Energy Accumulator (J) | CONFIRMED (stress: 403→18332) |
-| 0x638 | 398 | ~805 | N | Core 1 Energy Accumulator (J) | CONFIRMED (stress: 420→18567) |
-| 0x63C | 399 | ~1408 | N | Core 2 Energy Accumulator (J) | CONFIRMED (stress: 688→18654) |
-| 0x640 | 400 | ~936 | N | Core 3 Energy Accumulator (J) | CONFIRMED (stress: 550→18542) |
-| 0x644 | 401 | ~1119 | N | Core 4 Energy Accumulator (J) | CONFIRMED (stress: 557→18889) |
-| 0x648 | 402 | ~1451 | N | Core 5 Energy Accumulator (J) | CONFIRMED (stress: 831→18665) |
-| 0x64C | 403 | ~763 | N | Core 6 Energy Accumulator (J) | CONFIRMED (stress: 437→18106) |
-| 0x650 | 404 | ~726 | N | Core 7 Energy Accumulator (J) | CONFIRMED (stress: 335→18610) |
+| 0x634 | 397 | ~830 | N | Core 0 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 403→18332 is an idle→load level change) |
+| 0x638 | 398 | ~805 | N | Core 1 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 420→18567 is an idle→load level change) |
+| 0x63C | 399 | ~1408 | N | Core 2 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 688→18654 is an idle→load level change) |
+| 0x640 | 400 | ~936 | N | Core 3 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 550→18542 is an idle→load level change) |
+| 0x644 | 401 | ~1119 | N | Core 4 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 557→18889 is an idle→load level change) |
+| 0x648 | 402 | ~1451 | N | Core 5 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 831→18665 is an idle→load level change) |
+| 0x64C | 403 | ~763 | N | Core 6 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 437→18106 is an idle→load level change) |
+| 0x650 | 404 | ~726 | N | Core 7 energy rate/credit — plateaus under steady load, does not accumulate | MED (was "Energy Accumulator (J)" / CONFIRMED; 335→18610 is an idle→load level change) |
 
 ## Zone 0x654 — Per-Thread C-State Residency (16 threads)
 
@@ -409,14 +411,14 @@ followed by its live value in the *same* unit. See
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
 | 0x6F4 | 445 | ~3.1 | N | Package Energy Rate (W) | MED |
-| 0x6F8 | 446 | 0.250 | Y | Scalar | LOW |
+| 0x6F8 | 446 | 0.23 idle → 0.33 load | N | Scalar (load-dependent) | LOW |
 | 0x6FC | 447 | 0.950 | Y | SVI3 Reference Voltage (V) | MED |
 | 0x700 | 448 | ~36.9 → ~55.3 | N | Heavily filtered thermal value (°C), **not** the core-temp average — at 60 s steady load the real core average is 78.3 °C while this reads 55.3 °C | LOW (was "Average Core Temp / HIGH") |
 | 0x704 | 449 | ~35.5 → ~53.4 | N | Same filtered signal as d[448], offset ~−1.9 °C. **Not** min core temp (real min 74.9 °C vs 53.4 °C) | LOW (was "Min Core Temp / HIGH") |
 | 0x708 | 450 | ~5.43 | N | Peak Core Frequency (GHz) | HIGH |
 | 0x70C | 451 | ~5.44 | N | Average Core Frequency (GHz) | HIGH |
 | 0x710 | 452 | ~29024 → ~22777 | N | Rolling counter — **decreases** under load, so it is a credit/countdown, not an energy total. The real energy accumulator is d[212] (2503 → 23218) | LOW (was "Total Package Energy Accumulator / HIGH") |
-| 0x714 | 453 | ~1549 | N | Power Accumulator | MED |
+| 0x714 | 453 | ~1550 idle → ~11 620 load | N | Power rate/credit — plateaus under steady load like d[212], does not accumulate | MED |
 | 0x718 | 454 | 0 | Y | Reserved | — |
 | 0x71C | 455 | ~5.43 | N | Effective Frequency (GHz) | HIGH |
 | 0x720 | 456 | ~35.3 | N | Ambient / Board Temp (°C) | MED |
@@ -432,35 +434,54 @@ Validated by stress test (idle vs vecmath 16 threads, 15 snapshots):
 |------|-----|---------|
 | d[186] + d[187] | **100.000** | GFX Thermal + Thermal Headroom = 100 always |
 
-### Perfect Mirrors (Pearson > 0.999)
+### Exact Mirrors (bit-identical in every snapshot)
+Verified 2026-07-30 over 120 consecutive same-snapshot reads: max delta 0.00000.
+
 | Pair | Meaning |
 |------|---------|
-| d[3] = d[26] = d[277] | Package Thermal (3 copies, delta < 0.002) |
-| d[9] = d[50] | SoC Thermal (2 copies, delta < 0.002) |
-| d[20] = d[51] | Package Power (exact copy) |
-| d[21] = d[56] | SoC Power (exact copy) |
-| d[58] = d[59] | VDDIO_MEM Voltage (exact copy) |
-| d[43] = d[44] | Max Voltage Limit (exact copy) |
-| d[27] = d[274] | CPPC Max Frequency / Boost Limit (exact copy) |
+| d[20] = d[51] | Package Power (W) |
+| d[21] = d[56] | SoC Power (W) |
+| d[58] = d[59] | VDDIO_MEM Voltage (V) |
+| d[43] = d[44] | Max Voltage Limit (V) |
+| d[27] = d[274] | CPPC Max Frequency / Boost Limit (GHz) |
+
+### Near-copies — correlated but **not** identical
+⚠ These were previously listed as perfect mirrors with "delta < 0.002". They are not:
+measured within a single snapshot (so no sampling skew), they differ on *every* read.
+High Pearson does not mean identical — they are separate averaging windows of the same
+signal. Their old "thermal" labels were part of the zone 0x000 misdiagnosis.
+
+| Pair | Max delta / 120 samples | Mean delta | Actual signal |
+|------|------------------------|-----------|---------------|
+| d[3] vs d[26] | 2.54 W | 0.55 W | PPT Value (W) |
+| d[3] vs d[277] | 11.68 W | 1.77 W | PPT Value (W) |
+| d[26] vs d[277] | 11.58 W | 2.04 W | PPT Value (W) |
+| d[9] vs d[50] | 2.07 A | 0.44 A | TDC Value (A) |
 
 ### Inverse Couplings (A↑ when B↓)
 | Pair | Behavior |
 |------|----------|
 | d[341-348] FIT/IDD ↑ | d[349-356] C6 Residency ↓ (perfect inverse under stress) |
 | d[341-348] FIT/IDD ↑ | d[357-364] C0 Residency ↑ (tracks together) |
-| d[212] Energy Accum ↑ | d[452] Total Pkg Energy ↓ (rolling counter overflow) |
+| d[212] power credit ↑ | d[452] rolling counter ↓ (neither is an energy total — see the row notes) |
 
 ### Correlated Domains (Pearson > 0.99)
 | Group | Offsets | Meaning |
 |-------|---------|---------|
-| Thermal cluster | d[3,26,277,317-324,448,449] | All core/pkg temps track together |
+| Thermal cluster | d[11,270,317-324,448,449] | Tctl, hotspot and per-core temps track together (d[3,26,277] are watts, not temps) |
 | Power cluster | d[17,20,21,50,51,56,273,333-340] | All power metrics track together |
-| Energy cluster | d[212,397-404,453] | All energy accumulators track together |
+| Energy cluster | d[212,397-404,453] | All track together, but as load-proportional rates that plateau — not accumulators |
 | Load cluster | d[301-308,341-348] | IDD and FIT track with load |
 
 ### Ghost Floats (never change under any condition)
-- **182 non-zero statics**: AGESA constants, DPM tables, voltage setpoints, frequency limits, silicon IDs
-- **104 zero statics**: Reserved/unused
+Measured 2026-07-30 with a median over 25 samples at idle and at 45 s of `stress-ng --cpu 16`
+(a mean is unusable here — the sysfs read occasionally returns a garbage sample that smears
+into every field):
+
+- **212 non-zero statics**: AGESA constants, DPM tables, voltage setpoints, frequency limits, silicon IDs
+- **106 zero statics**: Reserved/unused
+
+The earlier figures (182 / 104) were counted before the zone 0x000 correction and are ~15 % low.
 - **Notable ghosts**: d[65]=552.0 (silicon limit?), d[263]=32 (thread count), d[264]=16 (core count), d[265]=5.5, d[266]=4.0 (topology), d[94]=0.985 (reference voltage)
 
 ---
@@ -527,15 +548,61 @@ under an 88 °C limit. Three fields, three units, each pinned by the limit direc
 integer load and may simply not push EDC high enough to identify the field. Retry with an
 AVX-512 heavy load.
 
+## Honesty Audit 2026-07-30
+
+After the zone 0x000 correction, every mechanically checkable claim in this file was
+re-tested against live hardware by `research/audit_map.py`, which parses this document
+and asserts each claim rather than spot-checking a hand-picked subset. Findings that
+survived (all corrected above):
+
+| Claim | Was | Measured |
+|-------|-----|----------|
+| d[19], d[48], d[49] Vcore | `Static: Y` | 1.19 V idle → 1.31 V load |
+| d[62] SoC Power Limit | `Static: Y` | 49 W idle → 56 W load — the limit itself is renegotiated |
+| d[446] Scalar | `Static: Y`, 0.250 | 0.23 → 0.33 |
+| d[217-224] Min DPM Freq, 400 MHz | one row covering 8 indices | d[220] reads ~200 and drifts; it is not part of the block |
+| d[3] = d[26] = d[277], "delta < 0.002" | Perfect mirror | differ in **every** snapshot, up to 11.68 W apart |
+| d[9] = d[50], "delta < 0.002" | Perfect mirror | differ in every snapshot, up to 2.07 A apart |
+| d[212], d[397-404], d[453] | "Energy Accumulator (J) / CONFIRMED" | plateau under 50 s of steady load (23 260 → 23 205, +0.3 %); the idle→load jump was mistaken for accumulation |
+| d[263] Thread Count = 32 | MED | this part has 16 threads |
+| d[264] Core Count = 16 | MED | this part has 8 cores |
+| "Total floats mapped: 457" | — | 367 documented, **90 indices have no row** |
+| 182 non-zero / 104 zero statics | — | 212 / 106 |
+
+Claims that **passed**: all five exact mirrors (d[20]=d[51], d[21]=d[56], d[58]=d[59],
+d[43]=d[44], d[27]=d[274], bit-identical over 5 snapshots), d[186]+d[187]=100, the 82
+Reserved/zero indices, the remaining 218 `Static: Y` indices, and every cross-validation
+against a system sensor — Tctl vs k10temp at idle *and* load, per-core temps, core
+frequency vs cpufreq, boost limit vs `cpuinfo_max_freq`, iGPU sclk vs amdgpu, VDDCR_SoC vs
+vddnb, VDDIO_MEM vs DDR5 nominal, C6 residency collapse, and the 162 W / 120 A / 180 A
+stock limits.
+
+Two methodology notes, since both produced false failures on the first run:
+- Sample with a **median**, never a mean. The sysfs read occasionally returns a garbage
+  sample; a mean smears it into every field and manufactured 43 phantom "static field
+  moved" failures. Histogramming the accused fields over 500 samples showed exactly one
+  distinct value each.
+- Compare a PM field to an external sensor **only over a window**. d[49] vs amdgpu
+  `vddgfx` looks like a 34 mV mismatch on a single pair and a 4.3 mV match over 60 pairs,
+  because vddgfx alone swings 1.010-1.250 V at idle.
+
 ## Summary Statistics
 
-| Category | Count |
-|----------|-------|
-| CONFIRMED (struct/Pearson/cross-validated) | 58 |
-| HIGH confidence (strong pattern match) | ~120 |
-| MEDIUM confidence (inferred) | ~80 |
-| LOW confidence (guess) | ~30 |
-| Reserved / Zero | ~170 |
-| **Total floats mapped** | **457** |
+Counted mechanically from this file's own tables on 2026-07-30 (`research/audit_map.py`),
+per float **index**, not per table row:
+
+| Category | Indices |
+|----------|---------|
+| CONFIRMED (struct / cross-validated against a system sensor) | 72 |
+| HIGH confidence (strong pattern match) | 138 |
+| MEDIUM confidence (inferred) | 67 |
+| LOW confidence (guess) | 18 |
+| Reserved / no confidence tag | 72 |
+| **Documented** | **367 of 457** |
+| **No row at all** | **90** |
+
+⚠ The previous version of this table claimed "Total floats mapped: 457". That was never
+true — 90 indices have no row in this document. The confidence counts were also estimates
+rather than counts.
 
 *Note: This map was generated by cross-referencing the ryzen_smu `pm_table_gnr` struct, the Zen 3/4 `pm_table_0x240903` field layout, dynamic analysis (idle/stress/post-stress), Pearson correlation, and cross-validation against k10temp/amdgpu sysfs. Zone 0x000 and the "encoded temperature" fields were corrected on 2026-07-30 — see [Re-verification 2026-07-30](#re-verification-2026-07-30). Temperature fields that really are temperatures read as direct °C; the fields previously thought to be encoded temperatures are watts, amps and percentages.*
