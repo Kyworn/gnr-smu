@@ -182,7 +182,7 @@ followed by its live value in the *same* unit. See
 |--------|-----|---------|--------|---------|------------|
 | 0x210 | 132 | ~9.5 | N | SoC Power Domain (W) | MED |
 | 0x214 | 133 | ~3.3 | N | Fabric Power (W) | MED |
-| 0x218-0x2AC | 134-170 | 200-1200 | Y | LCLK / Peripheral DPM Clocks (MHz) | HIGH |
+| 0x218-0x2B0 | 134-172 | 200-1200 | Y | LCLK / Peripheral DPM Clocks (MHz) — d[171] reads 1028.57, d[172] reads 600 (the iGPU sclk value, cf. d[108]); both fit the block | HIGH (range corrected 2026-07-30: the row said `0x218-0x2AC | 134-170`, but 0x2AC is index 171, and 0x2B0 was in no row at all) |
 | 0x2B4 | 173 | 0.955 | Y | NB Voltage (V) | MED |
 | 0x2B8 | 174 | 0.955 | Y | NB Voltage (mirror) | MED |
 | 0x2BC | 175 | 0.855 | Y | IO Voltage (V) | MED |
@@ -324,27 +324,27 @@ followed by its live value in the *same* unit. See
 ### Core Power (W)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x534-0x550 | 333-340 | 0.3-0.6 idle / 5.4 stress | **Core Power (W) [8]** | CONFIRMED (stress: x15) |
+| 0x534-0x550 | 333-340 | 0.2-0.4 idle / 5.3 load | N | **Core Power (W) [8]** — monotonic in load, but the 8 values sum to only ~43 W against 124 W package, so the scope (core only? one voltage domain?) is not pinned | HIGH (was CONFIRMED) |
 
 ### Core FIT / Current
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x554-0x570 | 341-348 | 6-11 idle / 99 stress | **Core FIT / IDD Max (%) [8]** | CONFIRMED (stress: ~99%) |
+| 0x554-0x570 | 341-348 | 5-8 idle / 100 load | N | **Core FIT / IDD Max (%) [8]** — saturates at exactly 100.00 under load | CONFIRMED |
 
 ### Core C6 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x574-0x590 | 349-356 | 84-93 idle / 0.5 stress | **Core C6 Residency (%) [8]** | CONFIRMED (stress: idle 93%→stress 0.5%) |
+| 0x574-0x590 | 349-356 | 75-92 idle / 0.0 load | N | **Core C6 Residency (%) [8]** | CONFIRMED (collapses to exactly 0 under all-core load) |
 
 ### Core C0 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x594-0x5B0 | 357-364 | 0 idle / ~0 stress | **Core C0 Residency (%) [8]** | CONFIRMED (hardware idle metric) |
+| 0x594-0x5B0 | 357-364 | 0-16 idle / 0.0 load | N | **Not** C0 residency — reads up to 16 at *idle* and exactly 0 under all-core load, i.e. the opposite of C0. Behaves like a light-C-state residency | LOW (was "Core C0 Residency (%)" / CONFIRMED) |
 
 ### Core C1 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x5B4-0x5D0 | 365-372 | ~0 | Core C1 Residency (%) [8] | MED |
+| 0x5B4-0x5D0 | 365-372 | 0 | Y | Reads exactly 0 at idle and under load — no evidence it is C1 residency | LOW (was "Core C1 Residency" / MED) |
 
 ## Zone 0x5D4 — Core Frequency Limits (CONFIRMED by struct)
 
@@ -376,7 +376,7 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Meaning |
 |--------|-----|---------|---------|
-| 0x614-0x630 | 389-396 | 0 | Reserved |
+| 0x614-0x630 | 389-396 | 0 | Y | Reserved | HIGH |
 
 ## Zone 0x634 — Per-Core Energy Accumulators
 
@@ -395,16 +395,16 @@ followed by its live value in the *same* unit. See
 
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x654-0x670 | 405-412 | 0.04-0.12 | **Thread 0-7 C0 Residency (%) [8]** | CONFIRMED (stress: up to 0.89) |
-| 0x674-0x690 | 413-420 | 0.01-0.05 | **Thread 8-15 C0 Residency (%) [8]** | CONFIRMED (stress: up to 0.94) |
+| 0x654-0x670 | 405-412 | 0.02-0.07 idle / 0.006-0.12 load | N | **Not** C0 residency — does not rise under a 16-thread load; individual lanes wander in both directions (d[408] 0.069→0.123, d[410] 0.065→0.006). Contrast d[413-420], which does behave like C0 | LOW (was "Thread 0-7 C0 Residency" / CONFIRMED) |
+| 0x674-0x690 | 413-420 | 0.02-0.04 idle / 0.97-0.99 load | N | **Thread C0 Residency (fraction 0-1) [8]** — the one block that behaves like C0: near 0 at idle, near 1 under all-core load | CONFIRMED |
 
 ## Zone 0x694 — Extended C-State / Residency Counters
 
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x694-0x6B0 | 421-428 | 0.01 | Secondary C-State Residency [8] | LOW |
-| 0x6B4-0x6D0 | 429-436 | 0.00 | Reserved / Unused Core States | — |
-| 0x6D4-0x6F0 | 437-444 | 0.01 | **Thread C-State Residency Alt [8]** | CONFIRMED (stress: reactive) |
+| 0x694-0x6B0 | 421-428 | 0.003-0.004 idle / 0 load | Y | Secondary C-State Residency [8] — collapses to 0 under load | LOW |
+| 0x6B4-0x6D0 | 429-436 | ~2e-05 | Y | Near-zero but **not** zero (1.8-2.1e-05, stable idle and load) — a residency-style field pinned at its floor, not a reserved hole | LOW |
+| 0x6D4-0x6F0 | 437-444 | 0.013-0.033 idle / 1.4-2.3 load | N | Rises with load but **exceeds 1.0**, so it is not a residency fraction like d[413-420]. Domain unknown | LOW (was "Thread C-State Residency Alt" / CONFIRMED) |
 
 ## Zone 0x6F4 — Final Metrics
 
@@ -478,8 +478,13 @@ Measured 2026-07-30 with a median over 25 samples at idle and at 45 s of `stress
 (a mean is unusable here — the sysfs read occasionally returns a garbage sample that smears
 into every field):
 
-- **212 non-zero statics**: AGESA constants, DPM tables, voltage setpoints, frequency limits, silicon IDs
-- **106 zero statics**: Reserved/unused
+- **~200-215 non-zero statics**: AGESA constants, DPM tables, voltage setpoints, frequency limits, silicon IDs
+- **~105-110 zero statics**: Reserved/unused
+
+Given as ranges, not point values, on purpose: the count moves by ±5 % between runs
+depending on what else the machine is doing. Anything using the iGPU during the run —
+a browser playing video is enough — moves fields that are otherwise static, and shifts
+the iGPU cross-validation offsets too. Run the audit on an otherwise idle desktop.
 
 The earlier figures (182 / 104) were counted before the zone 0x000 correction and are ~15 % low.
 - **Notable ghosts**: d[65]=552.0 (silicon limit?), d[263]=32 (thread count), d[264]=16 (core count), d[265]=5.5, d[266]=4.0 (topology), d[94]=0.985 (reference voltage)
@@ -602,7 +607,7 @@ survived (all corrected above):
 | d[212], d[397-404], d[453] | "Energy Accumulator (J) / CONFIRMED" | plateau under 50 s of steady load (23 260 → 23 205, +0.3 %); the idle→load jump was mistaken for accumulation |
 | d[263] Thread Count = 32 | MED | this part has 16 threads |
 | d[264] Core Count = 16 | MED | this part has 8 cores |
-| "Total floats mapped: 457" | — | 367 documented, **90 indices have no row** |
+| "Total floats mapped: 457" | — | unverifiable as written; 11 rows were malformed (5 columns, no `Static`) and invisible to every test, plus an off-by-one range. Fixed — coverage is now really 457 |
 | 182 non-zero / 104 zero statics | — | 212 / 106 |
 
 Claims that **passed**: all five exact mirrors (d[20]=d[51], d[21]=d[56], d[58]=d[59],
@@ -634,11 +639,13 @@ per float **index**, not per table row:
 | MEDIUM confidence (inferred) | 67 |
 | LOW confidence (guess) | 18 |
 | Reserved / no confidence tag | 72 |
-| **Documented** | **367 of 457** |
-| **No row at all** | **90** |
+| **Documented** | **457 of 457** |
 
-⚠ The previous version of this table claimed "Total floats mapped: 457". That was never
-true — 90 indices have no row in this document. The confidence counts were also estimates
-rather than counts.
+⚠ The version before 2026-07-30 claimed "Total floats mapped: 457" with no way to check it,
+and the confidence counts were estimates rather than counts. A first pass reported 90
+indices with no row — that figure was a **parser artifact**: 11 rows had five columns
+instead of six (no `Static` column), hiding 88 indices from every audit test, and one row
+had an off-by-one offset range that dropped 2 more. Both are fixed; coverage really is
+457 now.
 
 *Note: This map was generated by cross-referencing the ryzen_smu `pm_table_gnr` struct, the Zen 3/4 `pm_table_0x240903` field layout, dynamic analysis (idle/stress/post-stress), Pearson correlation, and cross-validation against k10temp/amdgpu sysfs. Zone 0x000 and the "encoded temperature" fields were corrected on 2026-07-30 — see [Re-verification 2026-07-30](#re-verification-2026-07-30). Temperature fields that really are temperatures read as direct °C; the fields previously thought to be encoded temperatures are watts, amps and percentages.*

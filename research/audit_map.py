@@ -98,10 +98,30 @@ print(f"Parsed {len(rows)} documented rows from PM_TABLE_MAP.md "
       f"covering {len({i for r in rows for i in r[0]})} float indices\n")
 
 # ---------------------------------------------------------------- measure
-# 60 s, not 25: after a previous stress run the die is still shedding heat, and a
-# warm "idle" baseline makes every thermal comparison look wrong.
-print("Sampling IDLE (60 s settle) ...")
-time.sleep(60)
+def wait_cool(max_wait=420, window=30, tol=0.5, max_load=1.0):
+    """Block until the machine is genuinely idle: Tctl stable AND load average low.
+
+    Two conditions, because either alone is not enough. A fixed sleep is not enough
+    (the die sheds heat for minutes after a stress run). Temperature stability alone
+    is not enough either — during a transient, d[11] and k10temp disagree by up to
+    8 C simply because they respond at different rates, which reads as a mismatch
+    that is really just "you measured during cooldown".
+    """
+    deadline = time.time() + max_wait
+    prev = float(rd(f"{K10}/temp1_input")) / 1000
+    while time.time() < deadline:
+        time.sleep(window)
+        cur = float(rd(f"{K10}/temp1_input")) / 1000
+        load1 = float(rd("/proc/loadavg").split()[0].replace(",", "."))
+        if abs(prev - cur) < tol and load1 < max_load:
+            return cur, load1
+        prev = cur
+    return prev, load1
+
+
+print("Sampling IDLE (waiting for Tctl to settle) ...")
+cool_t, cool_l = wait_cool()
+print(f"  settled at {cool_t:.1f} C, load average {cool_l:.2f}")
 # amdgpu rails move with load, so they must be read in the same window as the PM
 # samples they are compared against — not once at the end of the script.
 idle_vddgfx = float(rd(f"{AMDGPU}/in0_input")) / 1000
@@ -143,9 +163,12 @@ for idxs, typical, static, meaning in rows:
         continue
     for i in idxs:
         zero_checked += 1
-        if abs(idle[i]) > 1e-6 or abs(load[i]) > 1e-6:
+        # 1e-4, not 1e-6: several "reserved" fields rest at a ~2e-05 floor rather
+        # than a true zero, and reporting those as "is not zero: idle=0.0000" is
+        # noise that hides real failures.
+        if abs(idle[i]) > 1e-4 or abs(load[i]) > 1e-4:
             fail("ZERO", f"d[{i}] (0x{i * 4:03X}) '{meaning[:44]}' is not zero: "
-                         f"idle={idle[i]:.4f} load={load[i]:.4f}")
+                         f"idle={idle[i]:.6g} load={load[i]:.6g}")
 print(f"  checked {zero_checked} zero-marked indices\n")
 
 # ---------------------------------------------------------------- MIRRORS / SUM
@@ -280,15 +303,22 @@ print("== COUNT: summary statistics ==")
 nz_static = sum(1 for i in range(457)
                 if abs(load[i] - idle[i]) < 0.05 and abs(idle[i]) > 1e-6)
 z_static = sum(1 for i in range(457) if abs(idle[i]) < 1e-6 and abs(load[i]) < 1e-6)
-print(f"  non-zero statics: measured {nz_static}, documented 212")
-print(f"  zero statics    : measured {z_static}, documented 106")
-if abs(nz_static - 212) > 20:
-    warn("COUNT", f"non-zero static count {nz_static} vs documented 212")
-if abs(z_static - 106) > 20:
-    warn("COUNT", f"zero static count {z_static} vs documented 106")
+print(f"  non-zero statics: measured {nz_static}, documented ~200-215")
+print(f"  zero statics    : measured {z_static}, documented ~105-110")
+if not 190 <= nz_static <= 225:
+    warn("COUNT", f"non-zero static count {nz_static} outside the documented "
+                 "200-215 range — is something using the iGPU?")
+if not 95 <= z_static <= 120:
+    warn("COUNT", f"zero static count {z_static} outside the documented range")
 
+# Every index must have a well-formed row. A row missing its Static column parses
+# as prose and silently drops its indices from STATIC and ZERO — that is exactly how
+# 88 indices went untested for months.
 undocumented = sorted({i for i in range(457)} - {i for r in rows for i in r[0]})
-print(f"  indices with no documented row: {len(undocumented)}")
+print(f"  indices with no parseable row: {len(undocumented)}")
+if undocumented:
+    fail("COUNT", f"{len(undocumented)} indices have no parseable row "
+                  f"(first: {undocumented[:8]}) — likely a malformed table row")
 print()
 
 print("=" * 60)
