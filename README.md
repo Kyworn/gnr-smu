@@ -9,6 +9,33 @@ The `ryzen_smu` driver exposes a 1828-byte PM table at
 published layout. This repo is the layout, worked out by measurement, plus the tools
 that read and write it.
 
+## Wanted: a dump from any other Granite Ridge part
+
+This is the one thing that would move the project forward, and it takes about ten
+seconds. Any Zen 5 desktop chip that is not a 9800X3D — 9600X, 9700X, 9900X, 9950X,
+9950X3D, anything:
+
+```bash
+sudo python3 tools/dump_table_full.py > my_dump.txt
+```
+
+Open an issue with that file and your exact CPU model. The dump tool works on
+unvalidated hardware on purpose: it drops the labels and prints raw values, which is
+exactly what is needed to compare layouts.
+
+Why it matters: every offset here comes from one machine, so nothing distinguishes
+"this is where AMD puts Tctl" from "this is where Tctl landed on my 9800X3D". A second
+part settles that. A 12- or 16-core part also settles where the per-core arrays end,
+which is currently inferred from a single 8-wide block.
+
+The other open questions need a different lever rather than more data. Thirteen fields
+have a narrowed domain but no identification, because under load every axis rises at
+once and none of them separates cleanly; on Zen 5 the die's thermal constant is
+sub-second, so decay timing cannot separate the power and thermal domains either. That
+needs frequency varied at constant power, or fixed power at two ambient temperatures.
+And there is no live EDC value anywhere in this table version — that one is closed, and
+the search is written up as a negative result.
+
 ## Read this before running it on your machine
 
 **Every offset here was measured on exactly one machine:** a Ryzen 7 9800X3D,
@@ -29,8 +56,8 @@ guess:
 | CSV/JSON export | full | exits, does not write a file |
 | SMU writes (limits, Curve Optimizer) | allowed | blocked |
 
-If you have other Granite Ridge hardware, the useful contribution is a `pm_table`
-dump plus your CPU model — not loosening the gate.
+If you hit the gate, send a dump rather than loosening it — the offsets would be wrong,
+not missing.
 
 ## What is actually known
 
@@ -51,10 +78,9 @@ very different weight, and the confidence column says which is which:
   were disproved; the rows now say what they are *not*. See
   [the honesty audit](PM_TABLE_MAP.md#honesty-audit-2026-07-30).
 
-Open questions are in [docs/TOFIX.md](docs/TOFIX.md). The short version: there is no
-live EDC value anywhere in this table version (searched exhaustively — see
-[the negative result](PM_TABLE_MAP.md#edc_value--closed-negative-result-2026-07-30)),
-and thirteen fields have their domain narrowed but no identification.
+Open questions are tracked in [docs/TOFIX.md](docs/TOFIX.md); the EDC search is written
+up as
+[a negative result](PM_TABLE_MAP.md#edc_value--closed-negative-result-2026-07-30).
 
 ## Verifying the map
 
@@ -115,9 +141,7 @@ in `$XDG_CONFIG_HOME/gnr_master.json` to keep the display honest.
 mailbox tools.
 
 `dump_table_full.py` prints the whole table with each field's documented meaning and
-confidence, read from `PM_TABLE_MAP.md` itself. On unvalidated hardware it drops the
-labels and prints raw values — that dump, plus your CPU model, is exactly what the map
-needs to grow past one machine.
+confidence, read from `PM_TABLE_MAP.md` itself.
 
 ## Requirements
 
