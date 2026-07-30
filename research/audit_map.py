@@ -307,7 +307,7 @@ print(f"  non-zero statics: measured {nz_static}, documented ~200-215")
 print(f"  zero statics    : measured {z_static}, documented ~105-110")
 if not 190 <= nz_static <= 225:
     warn("COUNT", f"non-zero static count {nz_static} outside the documented "
-                 "200-215 range — is something using the iGPU?")
+                 "200-215 range — background CPU activity?")
 if not 95 <= z_static <= 120:
     warn("COUNT", f"zero static count {z_static} outside the documented range")
 

@@ -482,9 +482,14 @@ into every field):
 - **~105-110 zero statics**: Reserved/unused
 
 Given as ranges, not point values, on purpose: the count moves by ±5 % between runs
-depending on what else the machine is doing. Anything using the iGPU during the run —
-a browser playing video is enough — moves fields that are otherwise static, and shifts
-the iGPU cross-validation offsets too. Run the audit on an otherwise idle desktop.
+depending on background CPU activity, which keeps a handful of otherwise-static fields
+drifting. Run the audit on an otherwise idle desktop.
+
+The iGPU is **not** a confound on this machine, and it is worth saying why, because the
+opposite is the intuitive guess. With a discrete RTX 5080 present (`01:00.0`) the iGPU at
+`76:00.0` is fully parked — `gpu_busy_percent` 0, `d[107]` 0.00 W, `d[108]` pinned at
+600 MHz — even with a browser playing video. That is exactly what makes the iGPU offsets
+such a clean cross-validation reference: they are supposed to be flat, and they are.
 
 The earlier figures (182 / 104) were counted before the zone 0x000 correction and are ~15 % low.
 - **Notable ghosts**: d[65]=552.0 (silicon limit?), d[263]=32 (thread count), d[264]=16 (core count), d[265]=5.5, d[266]=4.0 (topology), d[94]=0.985 (reference voltage)
