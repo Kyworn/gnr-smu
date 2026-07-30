@@ -4,9 +4,34 @@ import os
 import struct
 import json
 
-CONFIG_PATH = "/home/zorko/.config/gnr_master.json"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from hwgate import hardware_supported
+
+CONFIG_PATH = os.path.join(
+    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+    "gnr_master.json",
+)
+
+# Stock 9800X3D, read back from the PM table limits d[2]/d[8]/d[63] and matching AMD
+# spec. The reset option used to send 85 A TDC and 120 A EDC, which is not stock: it
+# clamped both below what the part ships with, so "reset" quietly throttled the CPU.
+STOCK_PPT_W, STOCK_TDC_A, STOCK_EDC_A = 162, 120, 180
+CORES = 8
+
+# The GUI blocks these outright; the CLI never sends them, but it applies the same
+# rule so the two cannot drift. 0x10 and 0x03-0x0D are the dangerous MP1 IDs.
+BLOCKED = {0x10} | set(range(0x03, 0x0E))
+
 
 def apply_cmd(msg_id, arg0):
+    ok, why = hardware_supported()
+    if not ok:
+        print(f"[BLOCKED] SMU writes disabled: {why}")
+        return False
+    if msg_id in BLOCKED:
+        print(f"[BLOCKED] guardrail: MSG 0x{msg_id:02x}")
+        return False
+
     smu_args = "/sys/kernel/ryzen_smu_drv/smu_args"
     smu_cmd = "/sys/kernel/ryzen_smu_drv/mp1_smu_cmd"
     try:
@@ -26,11 +51,30 @@ def apply_cmd(msg_id, arg0):
 
 def save_co_config(co_val):
     try:
-        data = {"co_offsets": [co_val] * 8}
+        data = {"co_offsets": [co_val] * CORES}
         with open(CONFIG_PATH, "w") as f:
             json.dump(data, f)
-    except Exception:
-        pass
+    except OSError as e:
+        # This used to swallow the error. The offsets are write-only — the SMU will
+        # not read them back — so a failed save means the GUI shows 0 for settings
+        # that are actually applied.
+        print(f"[WARN] could not cache CO offsets to {CONFIG_PATH}: {e}")
+
+def ask_limit(name, unit, max_val):
+    """Bounded numeric input. The GUI clamps these with spin-box ranges; the CLI took
+    any float and sent it straight to the SMU, so a typo was a hardware command.
+    Returns None if the value is out of range or unparseable."""
+    raw = input(f"{name} ({unit}, 0-{max_val}): ")
+    try:
+        v = float(raw)
+    except ValueError:
+        print(f"[ERROR] not a number: {raw!r}")
+        return None
+    if not 0 <= v <= max_val:
+        print(f"[ERROR] {name} must be between 0 and {max_val} {unit}, got {v}")
+        return None
+    return v
+
 
 def main():
     print("--- GNR Master Control ---")
@@ -44,29 +88,32 @@ def main():
     choice = input("Option: ")
     
     if choice == '1':
-        w = float(input("PPT (Watts): "))
-        apply_cmd(0x3E, int(w * 1000))
+        w = ask_limit("PPT", "Watts", 250)
+        if w is not None:
+            apply_cmd(0x3E, int(w * 1000))
     elif choice == '2':
-        a = float(input("TDC (Amps): "))
+        a = ask_limit("TDC", "Amps", 200)
         # 0x3D is the real TDC limit on Granite Ridge
-        apply_cmd(0x3D, int(a * 1000))
+        if a is not None:
+            apply_cmd(0x3D, int(a * 1000))
     elif choice == '3':
-        a = float(input("EDC (Amps): "))
+        a = ask_limit("EDC", "Amps", 250)
         # 0x3C is the real EDC limit on Granite Ridge
-        apply_cmd(0x3C, int(a * 1000))
+        if a is not None:
+            apply_cmd(0x3C, int(a * 1000))
     elif choice == '4':
         val = 0xFFFFFFE2 # -30 as 32-bit unsigned
-        for i in range(8):
+        for i in range(CORES):
             apply_cmd(0x50 + i, val)
         save_co_config(-30)
         print("CO -30 saved locally for the GUI!")
     elif choice == '5':
-        # Reset defaults (162W PPT, 85A TDC, 120A EDC)
-        apply_cmd(0x3E, 162000)
-        apply_cmd(0x3D, 85000)
-        apply_cmd(0x3C, 120000)
+        # Reset to stock
+        apply_cmd(0x3E, STOCK_PPT_W * 1000)
+        apply_cmd(0x3D, STOCK_TDC_A * 1000)
+        apply_cmd(0x3C, STOCK_EDC_A * 1000)
         save_co_config(0)
-        for i in range(8): apply_cmd(0x50 + i, 0)
+        for i in range(CORES): apply_cmd(0x50 + i, 0)
         print("Reset successful.")
     
 if __name__ == "__main__":
