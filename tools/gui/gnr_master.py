@@ -27,17 +27,21 @@ from hwgate import (curve_optimizer_command, get_hardware_profile,
 # and they were the wrong way round, so the dialog had been sending the TDC box to EDC.
 
 # --- Color Theme ---
-BG_MAIN = "#121826"
-BG_PANEL = "#1a2332"
-BG_INNER = "#232d3f"
-BORDER = "#3b4758"
-TEXT_MAIN = "#f8fafc"
-TEXT_MUTED = "#8b9bb4"
-ACCENT_RED = "#ef4444"
-ACCENT_ORANGE = "#f97316"
-ACCENT_GREEN = "#22c55e"
-ACCENT_PURPLE = "#a855f7"
-ACCENT_CYAN = "#22d3ee"
+BG_MAIN = "#101722"
+BG_SIDEBAR = "#0b111b"
+BG_PANEL = "#172233"
+BG_INNER = "#1d2a3d"
+BG_TREE = "#0b1018"
+BG_TREE_ALT = "#121b27"
+BG_TREE_CURRENT = "#193451"
+BORDER = "#2c3c52"
+TEXT_MAIN = "#e6edf3"
+TEXT_MUTED = "#91a4bd"
+ACCENT_RED = "#f05d68"
+ACCENT_ORANGE = "#ff9d2e"
+ACCENT_GREEN = "#36c987"
+ACCENT_PURPLE = "#b48cff"
+ACCENT_CYAN = "#42c8e8"
 
 
 def physical_core_cpu_ids():
@@ -215,7 +219,7 @@ class GNRMaster(QMainWindow):
         self.core_count = self.profile.cores if self.profile else 8
         cpu_name = self.profile.name if self.profile else "Unsupported CPU"
         self.setWindowTitle(f"GNR Master - {cpu_name} Telemetry")
-        self.setMinimumSize(1500 if self.core_count > 8 else 1250, 720)
+        self.setMinimumSize(980, 620)
         self.setStyleSheet(
             f"background-color: {BG_MAIN}; color: {TEXT_MAIN}; font-family: 'Segoe UI';"
         )
@@ -237,6 +241,7 @@ class GNRMaster(QMainWindow):
         self.core_cpu_ids = physical_core_cpu_ids()
 
         self._build_interface()
+        self._restore_window_size()
 
         self.log_msg(
             "Dashboard initialized. Listening to kernel logs...", "STATUS", ACCENT_GREEN
@@ -260,8 +265,11 @@ class GNRMaster(QMainWindow):
         self.setCentralWidget(root)
 
         sidebar = QFrame()
-        sidebar.setFixedWidth(138)
-        sidebar.setStyleSheet(f"background: #0e1420; border-right: 1px solid {BORDER};")
+        self.sidebar_width = 138
+        sidebar.setFixedWidth(self.sidebar_width)
+        sidebar.setStyleSheet(
+            f"background: {BG_SIDEBAR}; border-right: 1px solid {BORDER};"
+        )
         sidebar_layout = QVBoxLayout(sidebar)
         sidebar_layout.setContentsMargins(10, 16, 10, 16)
         sidebar_layout.setSpacing(7)
@@ -356,13 +364,13 @@ class GNRMaster(QMainWindow):
         self.sensor_tree.setIndentation(16)
         self.sensor_tree.setAnimated(False)
         self.sensor_tree.setStyleSheet(
-            "QTreeWidget { background: #06080b; alternate-background-color: #171717; "
-            "color: #e5e7eb; border: 1px solid #303846; font-family: Consolas, monospace; "
+            f"QTreeWidget {{ background: {BG_TREE}; alternate-background-color: {BG_TREE_ALT}; "
+            f"color: {TEXT_MAIN}; border: 1px solid {BORDER}; font-family: Consolas, monospace; "
             "font-size: 12px; } "
-            "QTreeWidget::item { height: 22px; border-bottom: 1px solid #101216; } "
-            "QTreeWidget::item:selected { background: #172b47; color: #ffffff; } "
-            "QHeaderView::section { background: #151a22; color: #f8fafc; border: none; "
-            "border-right: 1px solid #303846; padding: 5px 8px; font-weight: 700; }"
+            "QTreeWidget::item { height: 22px; border-bottom: 1px solid #172231; } "
+            "QTreeWidget::item:selected { background: #214364; color: #ffffff; } "
+            f"QHeaderView::section {{ background: {BG_PANEL}; color: {TEXT_MAIN}; border: none; "
+            f"border-right: 1px solid {BORDER}; padding: 5px 8px; font-weight: 700; }}"
         )
         header = self.sensor_tree.header()
         header.setStretchLastSection(False)
@@ -408,8 +416,8 @@ class GNRMaster(QMainWindow):
                 column,
                 int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
             )
-        item.setBackground(1, QColor("#14243d"))
-        item.setForeground(1, QColor("#dbeafe"))
+        item.setBackground(1, QColor(BG_TREE_CURRENT))
+        item.setForeground(1, QColor("#d6e6ff"))
         if tooltip:
             item.setToolTip(0, tooltip)
         parent.addChild(item)
@@ -570,8 +578,8 @@ class GNRMaster(QMainWindow):
             f"QPushButton {{ color: {TEXT_MUTED}; background: transparent; border: none; "
             "border-radius: 6px; text-align: left; padding: 9px 11px; font-size: 12px; }} "
             f"QPushButton:hover {{ background: {BG_INNER}; color: {TEXT_MAIN}; }} "
-            f"QPushButton:checked {{ background: #2b211d; color: {ACCENT_ORANGE}; "
-            "font-weight: 700; border-left: 3px solid #f97316; }}"
+            f"QPushButton:checked {{ background: #2d251d; color: {ACCENT_ORANGE}; "
+            f"font-weight: 700; border-left: 3px solid {ACCENT_ORANGE}; }}"
         )
 
     def _control_button_style(self):
@@ -609,6 +617,28 @@ class GNRMaster(QMainWindow):
         except (TypeError, ValueError):
             return 500
 
+    def _fit_window_size(self, width, height):
+        width = max(self.minimumWidth(), int(width))
+        height = max(self.minimumHeight(), int(height))
+        return QSize(width, height)
+
+    def _default_window_size(self):
+        column_width = sum(
+            self.sensor_tree.header().sectionSize(column) for column in range(5)
+        )
+        scrollbar_width = self.sensor_tree.verticalScrollBar().sizeHint().width()
+        width = self.sidebar_width + column_width + scrollbar_width + 52
+        return self._fit_window_size(width, 900)
+
+    def _restore_window_size(self):
+        saved_size = self.config.get("window_size")
+        if (isinstance(saved_size, list) and len(saved_size) == 2
+                and all(isinstance(value, (int, float)) for value in saved_size)):
+            size = self._fit_window_size(saved_size[0], saved_size[1])
+        else:
+            size = self._default_window_size()
+        self.resize(size)
+
     def _save_config(self, updates):
         try:
             self.config.update(updates)
@@ -629,6 +659,7 @@ class GNRMaster(QMainWindow):
         self._save_config({
             "sensor_header_state": header_state,
             "sensor_update_ms": self.sensor_update_ms,
+            "window_size": [self.width(), self.height()],
         })
 
     def _set_update_interval(self, value):
@@ -636,6 +667,15 @@ class GNRMaster(QMainWindow):
         if hasattr(self, "timer"):
             self.timer.setInterval(self.sensor_update_ms)
         self._queue_sensor_preferences()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "_preferences_timer") and hasattr(self, "sensor_tree"):
+            self._queue_sensor_preferences()
+
+    def closeEvent(self, event):
+        self._save_sensor_preferences()
+        super().closeEvent(event)
 
     def load_co_config(self):
         try:

@@ -149,7 +149,8 @@ Curve Optimizer differs: `0x50`-`0x57` per core on the 9800X3D, as a signed 32-b
 value, against `0x35` on the 9950X3D with the CCD and core encoded into the argument.
 It is write-only either way — the SMU will not read the offsets back, so the tools
 cache them in `$XDG_CONFIG_HOME/gnr_master.json` to keep the display honest. The GUI
-also stores its sensor-table column order, column widths and refresh interval there.
+also stores its sensor-table column order, column widths, refresh interval and window
+size there.
 
 `research/` holds the measurement scripts, one per question asked: `audit_map.py`
 (the map's regression gate), `recheck_zone0.py` / `recheck_sweep.py` / `recheck_edc.py`
