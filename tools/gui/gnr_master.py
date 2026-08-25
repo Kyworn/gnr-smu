@@ -424,9 +424,7 @@ class GNRMaster(QMainWindow):
         self.nav_buttons = []
         self.pages = QStackedWidget()
         page_specs = [
-            ("Overview", "◫", self._build_overview_page),
-            ("Cores", "▦", self._build_cores_page),
-            ("System + L3", "◉", self._build_system_page),
+            ("Dashboard", "◫", self._build_overview_page),
             ("Logs", "≡", self._build_logs_page),
         ]
         for index, (name, icon, builder) in enumerate(page_specs):
@@ -472,8 +470,16 @@ class GNRMaster(QMainWindow):
 
     def _build_overview_page(self):
         page, layout = self._page(
-            "Overview", f"{self.profile.name if self.profile else 'Unsupported CPU'} · live telemetry"
+            "Dashboard", f"{self.profile.name if self.profile else 'Unsupported CPU'} · all live telemetry"
         )
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 5, 0)
+        body_layout.setSpacing(14)
+
         cards = QHBoxLayout()
         cards.setSpacing(10)
         self.ppt_card = MetricCard("PPT", color=ACCENT_RED)
@@ -484,7 +490,7 @@ class GNRMaster(QMainWindow):
         for card in (self.ppt_card, self.temp_card, self.socket_card,
                      self.vcore_card, self.tdc_card):
             cards.addWidget(card)
-        layout.addLayout(cards)
+        body_layout.addLayout(cards)
 
         charts = QHBoxLayout()
         charts.setSpacing(10)
@@ -502,7 +508,7 @@ class GNRMaster(QMainWindow):
         )
         charts.addWidget(power_panel)
         charts.addWidget(temp_panel)
-        layout.addLayout(charts, 2)
+        body_layout.addLayout(charts)
 
         ccd_row = QHBoxLayout()
         self.ccd_cards = []
@@ -511,8 +517,32 @@ class GNRMaster(QMainWindow):
             card = MetricCard(f"CCD {ccd}", "--", "Waiting for core telemetry", ACCENT_CYAN)
             self.ccd_cards.append(card)
             ccd_row.addWidget(card)
-        layout.addLayout(ccd_row)
+        body_layout.addLayout(ccd_row)
+        body_layout.addWidget(self._section_heading(
+            "CORE TELEMETRY", "All physical cores, grouped by CCD"
+        ))
+        self._add_core_sections(body_layout)
+        body_layout.addWidget(self._section_heading(
+            "SYSTEM, RAILS & L3", "Limits, clocks, power domains and CCD/L3 candidates"
+        ))
+        self._add_system_panels(body_layout)
+        body_layout.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
         return page
+
+    def _section_heading(self, title, subtitle):
+        heading = QWidget()
+        heading_layout = QVBoxLayout(heading)
+        heading_layout.setContentsMargins(0, 7, 0, 0)
+        heading_layout.setSpacing(2)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 750; color: #e2e8f0;")
+        subtitle_lbl = QLabel(subtitle)
+        subtitle_lbl.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        heading_layout.addWidget(title_lbl)
+        heading_layout.addWidget(subtitle_lbl)
+        return heading
 
     def _plot_panel(self, title):
         panel = TelemetryPanel(title)
@@ -528,17 +558,7 @@ class GNRMaster(QMainWindow):
         panel.layout_box.addWidget(plot)
         return panel, plot
 
-    def _build_cores_page(self):
-        page, layout = self._page(
-            "Core Telemetry", "Per-core frequency, voltage, temperature, power and C-state residency"
-        )
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 5, 0)
-        body_layout.setSpacing(14)
+    def _add_core_sections(self, layout):
         self.core_widgets = []
         for ccd in range(max(1, (self.core_count + 7) // 8)):
             section = TelemetryPanel(f"CCD {ccd}", f"Physical cores {ccd * 8}–{min(self.core_count - 1, ccd * 8 + 7)}")
@@ -552,22 +572,11 @@ class GNRMaster(QMainWindow):
                 local = core - start
                 grid.addWidget(widget, local // 4, local % 4)
             section.layout_box.addLayout(grid)
-            body_layout.addWidget(section)
-        body_layout.addStretch()
-        scroll.setWidget(body)
-        layout.addWidget(scroll)
-        return page
+            layout.addWidget(section)
 
-    def _build_system_page(self):
-        page, layout = self._page(
-            "System & L3", "Power limits, clocks, rails and experimental CCD/L3 candidates"
-        )
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body = QWidget()
-        grid = QGridLayout(body)
-        grid.setContentsMargins(0, 0, 5, 0)
+    def _add_system_panels(self, layout):
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
 
         limits = TelemetryPanel("POWER LIMITS")
@@ -617,10 +626,7 @@ class GNRMaster(QMainWindow):
         grid.addWidget(system, 0, 1)
         grid.addWidget(rails, 1, 0)
         grid.addWidget(l3, 1, 1)
-        grid.setRowStretch(2, 1)
-        scroll.setWidget(body)
-        layout.addWidget(scroll)
-        return page
+        layout.addLayout(grid)
 
     def _build_logs_page(self):
         page, layout = self._page(
