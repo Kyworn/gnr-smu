@@ -336,16 +336,21 @@ class GNRMaster(QMainWindow):
             f"QFrame#statusBar {{ background: {BG_PANEL}; border: 1px solid {BORDER}; "
             "border-radius: 4px; }"
         )
+        status_bar.setMinimumHeight(42)
         status_layout = QHBoxLayout(status_bar)
-        status_layout.setContentsMargins(9, 5, 9, 5)
-        status_layout.setSpacing(7)
+        status_layout.setContentsMargins(12, 5, 9, 5)
+        status_layout.setSpacing(8)
         self.summary_values = {}
+        self._add_summary_section(status_layout, "THERMALS")
         self._add_summary_metric(status_layout, "cpu", "CPU", ACCENT_ORANGE)
         for ccd in range(max(1, (self.core_count + 7) // 8)):
             self._add_summary_metric(status_layout, f"ccd{ccd}", f"CCD{ccd + 1}", ACCENT_CYAN)
+        self._add_summary_separator(status_layout)
+        self._add_summary_section(status_layout, "PERFORMANCE")
         self._add_summary_metric(status_layout, "frequency", "FREQ", ACCENT_PURPLE)
-        self._add_summary_metric(status_layout, "power", "POWER", ACCENT_GREEN)
-        self._add_summary_metric(status_layout, "limits", "LIMITS", TEXT_MAIN, minimum_width=270)
+        self._add_summary_separator(status_layout)
+        self._add_summary_section(status_layout, "LIMITS")
+        self._add_summary_metric(status_layout, "limits", "", TEXT_MAIN, minimum_width=270)
         status_layout.addStretch()
         self.reset_stats_button = QPushButton("Reset min/max")
         self.reset_stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -401,26 +406,50 @@ class GNRMaster(QMainWindow):
                 header.restoreState(QByteArray.fromBase64(saved_header.encode("ascii")))
             except UnicodeEncodeError:
                 pass
-        header.sectionMoved.connect(self._queue_sensor_preferences)
-        header.sectionResized.connect(self._queue_sensor_preferences)
         self.sensor_items = {}
         self.sensor_units = {}
         self.sensor_stats = {}
+        self.sensor_groups = {}
         self._build_sensor_tree()
+        header.sectionMoved.connect(self._queue_sensor_preferences)
+        header.sectionResized.connect(self._queue_sensor_preferences)
+        self.sensor_tree.itemExpanded.connect(self._queue_sensor_preferences)
+        self.sensor_tree.itemCollapsed.connect(self._queue_sensor_preferences)
         layout.addWidget(self.sensor_tree)
         return page
 
-    def _add_summary_metric(self, layout, key, title, color, minimum_width=82):
+    def _add_summary_section(self, layout, title):
+        label = QLabel(title)
+        label.setStyleSheet(
+            f"background: transparent; color: {TEXT_MUTED}; font-size: 9px; font-weight: 800;"
+        )
+        layout.addWidget(label)
+
+    def _add_summary_separator(self, layout):
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setStyleSheet(f"background: {BORDER}; border: none;")
+        separator.setFixedWidth(1)
+        layout.addWidget(separator)
+
+    def _add_summary_metric(self, layout, key, title, color, minimum_width=0):
         metric = QWidget()
-        metric.setMinimumWidth(minimum_width)
+        metric.setStyleSheet("background: transparent;")
+        if minimum_width:
+            metric.setMinimumWidth(minimum_width)
         metric_layout = QHBoxLayout(metric)
-        metric_layout.setContentsMargins(4, 0, 4, 0)
+        metric_layout.setContentsMargins(0, 0, 0, 0)
         metric_layout.setSpacing(5)
         title_label = QLabel(title)
-        title_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; font-weight: 700;")
+        title_label.setStyleSheet(
+            f"background: transparent; color: {TEXT_MUTED}; font-size: 10px; font-weight: 700;"
+        )
         value_label = QLabel("--")
-        value_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 700;")
-        metric_layout.addWidget(title_label)
+        value_label.setStyleSheet(
+            f"background: transparent; color: {color}; font-size: 12px; font-weight: 700;"
+        )
+        if title:
+            metric_layout.addWidget(title_label)
         metric_layout.addWidget(value_label)
         layout.addWidget(metric)
         self.summary_values[key] = value_label
@@ -433,7 +462,14 @@ class GNRMaster(QMainWindow):
     def _add_sensor_group(self, parent, label, expanded=True):
         item = QTreeWidgetItem([label, "", "", "", ""])
         item.setFirstColumnSpanned(True)
-        item.setExpanded(expanded)
+        parent_key = parent.data(0, Qt.ItemDataRole.UserRole) if parent is not None else ""
+        group_key = f"{parent_key}/{label}" if parent_key else label
+        expansion_config = self.config.get("sensor_group_expansion", {})
+        if not isinstance(expansion_config, dict):
+            expansion_config = {}
+        saved_state = expansion_config.get(group_key)
+        item.setExpanded(saved_state if isinstance(saved_state, bool) else expanded)
+        item.setData(0, Qt.ItemDataRole.UserRole, group_key)
         item.setForeground(0, QColor("#f8fafc"))
         font = item.font(0)
         font.setBold(True)
@@ -442,6 +478,7 @@ class GNRMaster(QMainWindow):
             self.sensor_tree.addTopLevelItem(item)
         else:
             parent.addChild(item)
+        self.sensor_groups[group_key] = item
         return item
 
     def _add_sensor(self, parent, key, label, unit, tooltip="", current_color=None):
@@ -574,14 +611,6 @@ class GNRMaster(QMainWindow):
         co_config = self._add_sensor_group(None, "Configured Curve Optimizer")
         for core in range(self.core_count):
             self._add_sensor(co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int")
-        expanded_items = [temperatures, core_temps, l3, limits, power, core_power,
-                          clocks, core_clocks, voltages, core_voltages, residency,
-                          ccd_summary, fit_group, c0_group, cc6_group, co_config]
-        if cc1_group is not None:
-            expanded_items.append(cc1_group)
-        for item in expanded_items:
-            self.sensor_tree.expandItem(item)
-
     def _format_sensor_value(self, value, unit):
         if value is None:
             return "--"
@@ -721,8 +750,12 @@ class GNRMaster(QMainWindow):
         if not hasattr(self, "sensor_tree"):
             return
         header_state = bytes(self.sensor_tree.header().saveState().toBase64()).decode("ascii")
+        group_expansion = {
+            key: item.isExpanded() for key, item in self.sensor_groups.items()
+        }
         self._save_config({
             "sensor_header_state": header_state,
+            "sensor_group_expansion": group_expansion,
             "sensor_update_ms": self.sensor_update_ms,
             "window_size": [self.width(), self.height()],
         })
@@ -929,7 +962,6 @@ class GNRMaster(QMainWindow):
         self._set_sensor("thermal_limit", d[10])
         socket_power = d[26] if self.profile.pm_version == 0x620205 else d[20]
         self._set_sensor("socket_power", socket_power)
-        self._set_summary("power", f"{socket_power:.1f} W")
         self._set_summary(
             "limits",
             f"PPT {d[3]:.0f}/{d[2]:.0f} W · TDC {d[9]:.0f}/{d[8]:.0f} A · EDC {d[63]:.0f} A",
