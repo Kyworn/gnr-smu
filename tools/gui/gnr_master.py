@@ -468,7 +468,6 @@ class GNRMaster(QMainWindow):
         if not isinstance(expansion_config, dict):
             expansion_config = {}
         saved_state = expansion_config.get(group_key)
-        item.setExpanded(saved_state if isinstance(saved_state, bool) else expanded)
         item.setData(0, Qt.ItemDataRole.UserRole, group_key)
         item.setForeground(0, QColor("#f8fafc"))
         font = item.font(0)
@@ -478,6 +477,9 @@ class GNRMaster(QMainWindow):
             self.sensor_tree.addTopLevelItem(item)
         else:
             parent.addChild(item)
+        # QTreeWidget only applies the initial expansion state once the item is
+        # attached to the tree.  This keeps a fresh configuration fully open.
+        item.setExpanded(saved_state if isinstance(saved_state, bool) else expanded)
         self.sensor_groups[group_key] = item
         return item
 
