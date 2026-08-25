@@ -320,19 +320,31 @@ class GNRMaster(QMainWindow):
         layout.setSpacing(13)
         heading = QLabel(title)
         heading.setStyleSheet("font-size: 22px; font-weight: 750; color: #f8fafc;")
-        caption = QLabel(subtitle)
-        caption.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
         layout.addWidget(heading)
-        layout.addWidget(caption)
+        if subtitle:
+            caption = QLabel(subtitle)
+            caption.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
+            layout.addWidget(caption)
         return page, layout
 
     def _build_overview_page(self):
-        page, layout = self._page(
-            "Sensors Status", f"{self.profile.name if self.profile else 'Unsupported CPU'} · live telemetry"
-        )
+        page, layout = self._page("Sensors Status", "")
         toolbar = QHBoxLayout()
-        hint = QLabel("Values accumulate while this window stays open.  Experimental fields keep their PM-table index.")
-        hint.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        toolbar.setSpacing(8)
+        summary = QFrame()
+        summary.setStyleSheet(
+            f"background: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 6px;"
+        )
+        summary_layout = QHBoxLayout(summary)
+        summary_layout.setContentsMargins(10, 6, 10, 6)
+        summary_layout.setSpacing(4)
+        self.summary_values = {}
+        self._add_summary_metric(summary_layout, "cpu", "CPU", ACCENT_ORANGE)
+        for ccd in range(max(1, (self.core_count + 7) // 8)):
+            self._add_summary_metric(summary_layout, f"ccd{ccd}", f"CCD{ccd + 1}", ACCENT_CYAN)
+        self._add_summary_metric(summary_layout, "frequency", "FREQ AVG", ACCENT_PURPLE)
+        self._add_summary_metric(summary_layout, "power", "POWER", ACCENT_GREEN)
+        self._add_summary_metric(summary_layout, "limits", "LIMITS", TEXT_MAIN, minimum_width=285)
         self.reset_stats_button = QPushButton("Reset min/max")
         self.reset_stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reset_stats_button.setStyleSheet(self._control_button_style())
@@ -349,7 +361,7 @@ class GNRMaster(QMainWindow):
             f"background: {BG_PANEL}; border: 1px solid {BORDER}; padding: 4px 6px;"
         )
         self.update_rate_input.valueChanged.connect(self._set_update_interval)
-        toolbar.addWidget(hint)
+        toolbar.addWidget(summary)
         toolbar.addStretch()
         toolbar.addWidget(refresh_label)
         toolbar.addWidget(self.update_rate_input)
@@ -398,6 +410,26 @@ class GNRMaster(QMainWindow):
         layout.addWidget(self.sensor_tree)
         return page
 
+    def _add_summary_metric(self, layout, key, title, color, minimum_width=100):
+        metric = QWidget()
+        metric.setMinimumWidth(minimum_width)
+        metric_layout = QVBoxLayout(metric)
+        metric_layout.setContentsMargins(8, 0, 8, 0)
+        metric_layout.setSpacing(1)
+        title_label = QLabel(title)
+        title_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 9px; font-weight: 700;")
+        value_label = QLabel("--")
+        value_label.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 700;")
+        metric_layout.addWidget(title_label)
+        metric_layout.addWidget(value_label)
+        layout.addWidget(metric)
+        self.summary_values[key] = value_label
+
+    def _set_summary(self, key, value):
+        label = self.summary_values.get(key)
+        if label is not None:
+            label.setText(value)
+
     def _add_sensor_group(self, parent, label, expanded=True):
         item = QTreeWidgetItem([label, "", "", "", ""])
         item.setFirstColumnSpanned(True)
@@ -406,7 +438,10 @@ class GNRMaster(QMainWindow):
         font = item.font(0)
         font.setBold(True)
         item.setFont(0, font)
-        parent.addChild(item)
+        if parent is None:
+            self.sensor_tree.addTopLevelItem(item)
+        else:
+            parent.addChild(item)
         return item
 
     def _add_sensor(self, parent, key, label, unit, tooltip="", current_color=None):
@@ -425,17 +460,7 @@ class GNRMaster(QMainWindow):
         self.sensor_units[key] = unit
 
     def _build_sensor_tree(self):
-        cpu_name = self.profile.name if self.profile else "Unsupported CPU"
-        root = QTreeWidgetItem([f"CPU [#0]: {cpu_name} · Enhanced", "", "", "", ""])
-        root.setFirstColumnSpanned(True)
-        root.setExpanded(True)
-        root.setForeground(0, QColor("#ffffff"))
-        root_font = root.font(0)
-        root_font.setBold(True)
-        root.setFont(0, root_font)
-        self.sensor_tree.addTopLevelItem(root)
-
-        temperatures = self._add_sensor_group(root, "Temperatures")
+        temperatures = self._add_sensor_group(None, "Temperatures")
         self._add_sensor(temperatures, "tctl", "CPU (Tctl/Tdie)", "°C")
         for ccd in range(max(1, (self.core_count + 7) // 8)):
             self._add_sensor(temperatures, f"tccd{ccd}", f"CPU CCD{ccd + 1} (k10temp)", "°C")
@@ -444,7 +469,7 @@ class GNRMaster(QMainWindow):
             self._add_sensor(core_temps, f"core_temp_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "°C")
 
-        l3 = self._add_sensor_group(root, "Experimental L3 / CCD candidates")
+        l3 = self._add_sensor_group(None, "Experimental L3 / CCD candidates")
         l3.setToolTip(0, "Low-confidence PM-table candidates; raw index remains visible.")
         if self.profile and self.profile.l3_count:
             for ccd in range(self.profile.l3_count):
@@ -460,7 +485,7 @@ class GNRMaster(QMainWindow):
         else:
             l3.setText(0, "Experimental L3 / CCD candidates (not mapped for this profile)")
 
-        limits = self._add_sensor_group(root, "Limits & current")
+        limits = self._add_sensor_group(None, "Limits & current")
         self._add_sensor(limits, "ppt", "CPU PPT", "W")
         self._add_sensor(limits, "ppt_limit", "CPU PPT Limit", "W")
         self._add_sensor(limits, "tdc", "CPU TDC", "A")
@@ -468,7 +493,7 @@ class GNRMaster(QMainWindow):
         self._add_sensor(limits, "edc_limit", "CPU EDC Limit", "A")
         self._add_sensor(limits, "thermal_limit", "Thermal Limit", "°C")
 
-        power = self._add_sensor_group(root, "Power")
+        power = self._add_sensor_group(None, "Power")
         for key, label in (
             ("socket_power", "CPU Socket Power"), ("cpu_power", "CPU Core Power"),
             ("core_power", "Core Power Sum"), ("soc_power", "CPU SoC Power"),
@@ -480,7 +505,7 @@ class GNRMaster(QMainWindow):
             self._add_sensor(core_power, f"core_power_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "W")
 
-        clocks = self._add_sensor_group(root, "Clocks")
+        clocks = self._add_sensor_group(None, "Clocks")
         for key, label in (("fclk", "Infinity Fabric Clock (FCLK)"),
                            ("uclk", "Memory Controller Clock (UCLK)"),
                            ("mclk", "Memory Clock (MCLK)")):
@@ -491,7 +516,7 @@ class GNRMaster(QMainWindow):
                              f"Core {core} (CCD{core // 8 + 1})", "MHz",
                              "Live frequency from Linux cpufreq on the 9950X3D")
 
-        voltages = self._add_sensor_group(root, "Voltages")
+        voltages = self._add_sensor_group(None, "Voltages")
         for key, label in (("vcore_peak", "Vcore Peak"), ("vcore_avg", "Vcore Average"),
                            ("vsoc", "VDDCR_SOC"), ("vdd_misc", "VDD_MISC"),
                            ("vddg_iod", "CLDO_VDDG_IOD"), ("vddg_ccd", "CLDO_VDDG_CCD"),
@@ -503,7 +528,7 @@ class GNRMaster(QMainWindow):
             self._add_sensor(core_voltages, f"core_voltage_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "V")
 
-        residency = self._add_sensor_group(root, "Core residency & FIT")
+        residency = self._add_sensor_group(None, "Core residency & FIT")
         ccd_summary = self._add_sensor_group(residency, "CCD residency summary")
         has_direct_c0 = self.profile is not None and self.profile.core_c0 is not None
         for ccd in range(max(1, (self.core_count + 7) // 8)):
@@ -546,10 +571,10 @@ class GNRMaster(QMainWindow):
             self._add_sensor(cc6_group, f"core_cc6_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "%",
                              current_color=ACCENT_PURPLE)
-        co_config = self._add_sensor_group(root, "Configured Curve Optimizer")
+        co_config = self._add_sensor_group(None, "Configured Curve Optimizer")
         for core in range(self.core_count):
             self._add_sensor(co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int")
-        expanded_items = [root, temperatures, core_temps, l3, limits, power, core_power,
+        expanded_items = [temperatures, core_temps, l3, limits, power, core_power,
                           clocks, core_clocks, voltages, core_voltages, residency,
                           ccd_summary, fit_group, c0_group, cc6_group, co_config]
         if cc1_group is not None:
@@ -895,13 +920,20 @@ class GNRMaster(QMainWindow):
     def _update_sensor_tree(self, d):
         vcores = [d[self.profile.core_voltage + i] for i in range(self.core_count)]
         self._set_sensor("tctl", d[11])
+        self._set_summary("cpu", f"{d[11]:.1f} °C")
         self._set_sensor("ppt", d[3])
         self._set_sensor("ppt_limit", d[2])
         self._set_sensor("tdc", d[9])
         self._set_sensor("tdc_limit", d[8])
         self._set_sensor("edc_limit", d[63])
         self._set_sensor("thermal_limit", d[10])
-        self._set_sensor("socket_power", d[26] if self.profile.pm_version == 0x620205 else d[20])
+        socket_power = d[26] if self.profile.pm_version == 0x620205 else d[20]
+        self._set_sensor("socket_power", socket_power)
+        self._set_summary("power", f"{socket_power:.1f} W")
+        self._set_summary(
+            "limits",
+            f"PPT {d[3]:.0f}/{d[2]:.0f} W · TDC {d[9]:.0f}/{d[8]:.0f} A · EDC {d[63]:.0f} A",
+        )
         self._set_sensor("cpu_power", d[20])
         self._set_sensor("core_power", sum(d[self.profile.core_power + i]
                                             for i in range(self.core_count)))
@@ -923,7 +955,11 @@ class GNRMaster(QMainWindow):
 
         ccd_count = max(1, (self.core_count + 7) // 8)
         for ccd in range(ccd_count):
-            self._set_sensor(f"tccd{ccd}", read_hwmon_temperature(f"Tccd{ccd + 1}"))
+            ccd_temp = read_hwmon_temperature(f"Tccd{ccd + 1}")
+            self._set_sensor(f"tccd{ccd}", ccd_temp)
+            self._set_summary(
+                f"ccd{ccd}", f"{ccd_temp:.1f} °C" if ccd_temp is not None else "--"
+            )
             start = ccd * 8
             stop = min(self.core_count, start + 8)
             cc6_values = [d[self.profile.core_cc6 + core] for core in range(start, stop)]
@@ -941,8 +977,11 @@ class GNRMaster(QMainWindow):
                 self._set_sensor(f"l3_logic_{ccd}", d[self.profile.l3_logic_power + ccd])
                 self._set_sensor(f"l3_vddm_{ccd}", d[self.profile.l3_vddm_power + ccd])
 
+        frequencies = []
         for core in range(self.core_count):
             freq = self._core_frequency_mhz(d, core)
+            if freq is not None:
+                frequencies.append(freq)
             self._set_sensor(f"core_temp_{core}", d[self.profile.core_temp + core])
             self._set_sensor(f"core_clock_{core}", freq)
             self._set_sensor(f"core_power_{core}", d[self.profile.core_power + core])
@@ -955,6 +994,10 @@ class GNRMaster(QMainWindow):
                 self._set_sensor(f"core_cc1_{core}", d[self.profile.core_cc1 + core])
             else:
                 self._set_sensor(f"core_c0_{core}", 100 - d[self.profile.core_cc6 + core])
+        if frequencies:
+            self._set_summary("frequency", f"{sum(frequencies) / len(frequencies):.0f} MHz")
+        else:
+            self._set_summary("frequency", "--")
 
     def update_data(self):
         ok, why = hardware_supported()
