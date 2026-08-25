@@ -409,7 +409,7 @@ class GNRMaster(QMainWindow):
         parent.addChild(item)
         return item
 
-    def _add_sensor(self, parent, key, label, unit, tooltip=""):
+    def _add_sensor(self, parent, key, label, unit, tooltip="", current_color=None):
         item = QTreeWidgetItem([label, "--", "--", "--", "--"])
         for column in range(1, 5):
             item.setTextAlignment(
@@ -417,7 +417,7 @@ class GNRMaster(QMainWindow):
                 int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
             )
         item.setBackground(1, QColor(BG_TREE_CURRENT))
-        item.setForeground(1, QColor("#d6e6ff"))
+        item.setForeground(1, QColor(current_color or "#d6e6ff"))
         if tooltip:
             item.setToolTip(0, tooltip)
         parent.addChild(item)
@@ -504,17 +504,57 @@ class GNRMaster(QMainWindow):
                              f"Core {core} (CCD{core // 8 + 1})", "V")
 
         residency = self._add_sensor_group(root, "Core residency & FIT")
+        ccd_summary = self._add_sensor_group(residency, "CCD residency summary")
+        has_direct_c0 = self.profile is not None and self.profile.core_c0 is not None
+        for ccd in range(max(1, (self.core_count + 7) // 8)):
+            label = f"CCD{ccd + 1} C0 residency" if has_direct_c0 else f"CCD{ccd + 1} active/load estimate"
+            self._add_sensor(ccd_summary, f"ccd_c0_{ccd}", label, "%",
+                             "C0 is direct on the 9950X3D; 9800X3D uses 100 - CC6.",
+                             ACCENT_GREEN)
+            if has_direct_c0:
+                self._add_sensor(ccd_summary, f"ccd_cc1_{ccd}", f"CCD{ccd + 1} CC1 residency", "%",
+                                 current_color=ACCENT_CYAN)
+            self._add_sensor(ccd_summary, f"ccd_cc6_{ccd}", f"CCD{ccd + 1} CC6 residency", "%",
+                             current_color=ACCENT_PURPLE)
+
+        fit_group = self._add_sensor_group(residency, "FIT / related metric")
         for core in range(self.core_count):
             ccd = core // 8 + 1
-            self._add_sensor(residency, f"core_fit_{core}", f"Core {core} FIT (CCD{ccd})", "")
-            self._add_sensor(residency, f"core_c0_{core}", f"Core {core} C0 residency (CCD{ccd})", "%")
-            self._add_sensor(residency, f"core_cc1_{core}", f"Core {core} CC1 residency (CCD{ccd})", "%")
-            self._add_sensor(residency, f"core_cc6_{core}", f"Core {core} CC6 residency (CCD{ccd})", "%")
+            self._add_sensor(fit_group, f"core_fit_{core}",
+                             f"Core {core} FIT-related metric (CCD{ccd})", "",
+                             "Per-core PM-table FIT/related metric; not a direct temperature or voltage reading.",
+                             ACCENT_ORANGE)
+
+        c0_group = self._add_sensor_group(
+            residency, "C0 residency · active cores" if has_direct_c0 else "Active/load estimate · 100 - CC6"
+        )
+        for core in range(self.core_count):
+            self._add_sensor(c0_group, f"core_c0_{core}",
+                             f"Core {core} (CCD{core // 8 + 1})", "%",
+                             current_color=ACCENT_GREEN)
+
+        cc1_group = None
+        if has_direct_c0:
+            cc1_group = self._add_sensor_group(residency, "CC1 residency · light idle")
+            for core in range(self.core_count):
+                self._add_sensor(cc1_group, f"core_cc1_{core}",
+                                 f"Core {core} (CCD{core // 8 + 1})", "%",
+                                 current_color=ACCENT_CYAN)
+
+        cc6_group = self._add_sensor_group(residency, "CC6 residency · deep idle")
+        for core in range(self.core_count):
+            self._add_sensor(cc6_group, f"core_cc6_{core}",
+                             f"Core {core} (CCD{core // 8 + 1})", "%",
+                             current_color=ACCENT_PURPLE)
         co_config = self._add_sensor_group(root, "Configured Curve Optimizer")
         for core in range(self.core_count):
             self._add_sensor(co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int")
-        for item in (root, temperatures, core_temps, l3, limits, power, core_power,
-                     clocks, core_clocks, voltages, core_voltages, residency, co_config):
+        expanded_items = [root, temperatures, core_temps, l3, limits, power, core_power,
+                          clocks, core_clocks, voltages, core_voltages, residency,
+                          ccd_summary, fit_group, c0_group, cc6_group, co_config]
+        if cc1_group is not None:
+            expanded_items.append(cc1_group)
+        for item in expanded_items:
             self.sensor_tree.expandItem(item)
 
     def _format_sensor_value(self, value, unit):
@@ -884,6 +924,17 @@ class GNRMaster(QMainWindow):
         ccd_count = max(1, (self.core_count + 7) // 8)
         for ccd in range(ccd_count):
             self._set_sensor(f"tccd{ccd}", read_hwmon_temperature(f"Tccd{ccd + 1}"))
+            start = ccd * 8
+            stop = min(self.core_count, start + 8)
+            cc6_values = [d[self.profile.core_cc6 + core] for core in range(start, stop)]
+            if self.profile.core_c0 is not None:
+                c0_values = [d[self.profile.core_c0 + core] for core in range(start, stop)]
+                cc1_values = [d[self.profile.core_cc1 + core] for core in range(start, stop)]
+                self._set_sensor(f"ccd_c0_{ccd}", sum(c0_values) / len(c0_values))
+                self._set_sensor(f"ccd_cc1_{ccd}", sum(cc1_values) / len(cc1_values))
+            else:
+                self._set_sensor(f"ccd_c0_{ccd}", 100 - sum(cc6_values) / len(cc6_values))
+            self._set_sensor(f"ccd_cc6_{ccd}", sum(cc6_values) / len(cc6_values))
         if self.profile.l3_count:
             for ccd in range(self.profile.l3_count):
                 self._set_sensor(f"l3_temp_{ccd}", d[self.profile.l3_temperature + ccd])
@@ -903,8 +954,7 @@ class GNRMaster(QMainWindow):
                 self._set_sensor(f"core_c0_{core}", d[self.profile.core_c0 + core])
                 self._set_sensor(f"core_cc1_{core}", d[self.profile.core_cc1 + core])
             else:
-                self._set_sensor(f"core_c0_{core}", None)
-                self._set_sensor(f"core_cc1_{core}", None)
+                self._set_sensor(f"core_c0_{core}", 100 - d[self.profile.core_cc6 + core])
 
     def update_data(self):
         ok, why = hardware_supported()
