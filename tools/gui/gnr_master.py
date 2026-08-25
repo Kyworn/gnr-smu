@@ -39,20 +39,7 @@ ACCENT_RED = "#ef4444"
 ACCENT_ORANGE = "#f97316"
 ACCENT_GREEN = "#22c55e"
 ACCENT_PURPLE = "#a855f7"
-
-
-# --- MAGIC FUNCTION FOR LARGE ICONS ---
-def create_text_icon(char, color, size=42):
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pixmap)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    p.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    p.setPen(QColor(color))
-    p.setFont(QFont("Segoe UI", int(size * 0.7)))
-    p.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, char)
-    p.end()
-    return QIcon(pixmap)
+ACCENT_CYAN = "#22d3ee"
 
 
 def physical_core_cpu_ids():
@@ -72,19 +59,24 @@ def physical_core_cpu_ids():
     return [cores[key] for key in sorted(cores)]
 
 
-def add_status_row(layout, text, color="#f8fafc"):
-    container = QWidget()
-    container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-    row = QVBoxLayout(container)
-    row.setContentsMargins(6, 3, 6, 3)
-    label = QLabel(text)
-    label.setWordWrap(True)
-    label.setStyleSheet(
-        f"color: {color}; font-size: 12px; border: none; padding: 2px 0;"
-    )
-    row.addWidget(label)
-    layout.addWidget(container)
-    return label
+def read_hwmon_temperature(label):
+    """Read a named k10temp channel without assuming a hwmon number."""
+    for name_path in glob.glob("/sys/class/hwmon/hwmon*/name"):
+        try:
+            with open(name_path) as f:
+                if f.read().strip() != "k10temp":
+                    continue
+            base = os.path.dirname(name_path)
+            for label_path in glob.glob(os.path.join(base, "temp*_label")):
+                with open(label_path) as f:
+                    if f.read().strip().lower() != label.lower():
+                        continue
+                input_path = label_path.replace("_label", "_input")
+                with open(input_path) as f:
+                    return float(f.read()) / 1000
+        except (OSError, ValueError):
+            continue
+    return None
 
 
 # ================= THREAD : REAL-TIME KERNEL LOGS =================
@@ -229,12 +221,78 @@ class Gauge(QWidget):
         p.drawText(0, 90, 130, 20, Qt.AlignmentFlag.AlignCenter, self.bottom_text)
 
 
+class MetricCard(QFrame):
+    def __init__(self, title, value="--", detail="", color=ACCENT_ORANGE):
+        super().__init__()
+        self.setObjectName("metricCard")
+        self.setMinimumHeight(112)
+        self.setStyleSheet(
+            f"QFrame#metricCard {{ background: {BG_PANEL}; border: 1px solid {BORDER}; "
+            "border-radius: 9px; } QLabel { border: none; background: transparent; }"
+        )
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 11, 14, 11)
+        layout.setSpacing(4)
+        self.title_lbl = QLabel(title)
+        self.title_lbl.setStyleSheet(
+            f"color: {TEXT_MUTED}; font-size: 11px; font-weight: 600;"
+        )
+        self.value_lbl = QLabel(value)
+        self.value_lbl.setStyleSheet(
+            f"color: {color}; font-size: 23px; font-weight: 700;"
+        )
+        self.detail_lbl = QLabel(detail)
+        self.detail_lbl.setWordWrap(True)
+        self.detail_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        layout.addWidget(self.title_lbl)
+        layout.addWidget(self.value_lbl)
+        layout.addWidget(self.detail_lbl)
+        layout.addStretch()
+
+    def set_value(self, value, detail=None):
+        self.value_lbl.setText(value)
+        if detail is not None:
+            self.detail_lbl.setText(detail)
+
+
+class TelemetryPanel(QFrame):
+    def __init__(self, title, subtitle=""):
+        super().__init__()
+        self.setObjectName("telemetryPanel")
+        self.setStyleSheet(
+            f"QFrame#telemetryPanel {{ background: {BG_PANEL}; border: 1px solid {BORDER}; "
+            "border-radius: 9px; } QLabel { border: none; background: transparent; }"
+        )
+        self.layout_box = QVBoxLayout(self)
+        self.layout_box.setContentsMargins(15, 13, 15, 13)
+        self.layout_box.setSpacing(8)
+        title_lbl = QLabel(title)
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 700; color: #e2e8f0;")
+        self.layout_box.addWidget(title_lbl)
+        if subtitle:
+            subtitle_lbl = QLabel(subtitle)
+            subtitle_lbl.setWordWrap(True)
+            subtitle_lbl.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+            self.layout_box.addWidget(subtitle_lbl)
+
+    def add_row(self, text="--", color=TEXT_MAIN):
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setStyleSheet(
+            f"color: {color}; font-size: 12px; padding: 7px 8px; "
+            f"background: {BG_INNER}; border-radius: 5px;"
+        )
+        self.layout_box.addWidget(label)
+        return label
+
+
 class CoreWidget(QFrame):
     def __init__(self, core_id):
         super().__init__()
         self.setStyleSheet(
             f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 6px;"
         )
+        self.setMinimumHeight(205)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(0)
@@ -260,17 +318,17 @@ class CoreWidget(QFrame):
         vt_layout = QHBoxLayout()
         vt_layout.setContentsMargins(0, 5, 0, 5)
         self.volt_lbl = QLabel("⚡ 0.000 V")
-        self.volt_lbl.setStyleSheet("color: #cbd5e1; border: none; font-size: 10px;")
+        self.volt_lbl.setStyleSheet("color: #cbd5e1; border: none; font-size: 11px;")
         self.temp_lbl = QLabel("🌡 0.00 C")
-        self.temp_lbl.setStyleSheet("color: #cbd5e1; border: none; font-size: 10px;")
+        self.temp_lbl.setStyleSheet("color: #cbd5e1; border: none; font-size: 11px;")
         vt_layout.addWidget(self.volt_lbl)
         vt_layout.addWidget(self.temp_lbl)
         layout.addLayout(vt_layout)
         self.pwr_lbl = QLabel("0.00 W")
-        self.pwr_lbl.setStyleSheet("color: #fbbf24; border: none; font-size: 10px;")
+        self.pwr_lbl.setStyleSheet("color: #fbbf24; border: none; font-size: 11px;")
         layout.addWidget(self.pwr_lbl)
         self.state_lbl = QLabel("FIT -- · C-state --")
-        self.state_lbl.setStyleSheet("color: #94a3b8; border: none; font-size: 8px;")
+        self.state_lbl.setStyleSheet("color: #94a3b8; border: none; font-size: 9px;")
         self.state_lbl.setWordWrap(True)
         layout.addWidget(self.state_lbl)
         load_lbl = QLabel("Load")
@@ -328,203 +386,7 @@ class GNRMaster(QMainWindow):
         # d[270] hotspot is very spiky (single reads jump +14 °C at idle) — smooth it
         self.hotspot_history = collections.deque([40.0] * 8, maxlen=8)
 
-        main_widget = QWidget()
-        main_layout = QHBoxLayout(main_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-        self.setCentralWidget(main_widget)
-        sidebar = QFrame()
-        sidebar.setFixedWidth(90)
-        sidebar.setStyleSheet(
-            f"background-color: {BG_MAIN}; border-right: 1px solid {BG_MAIN};"
-        )
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(0, 15, 0, 15)
-
-        icons = ["⊞", "⚡", "⌡"]
-        labels = ["Dashboard", "Core Control", "Power/Thermal"]
-        self.sidebar_btns = {}
-
-        for ic, lbl in zip(icons, labels):
-            btn = QToolButton()
-            btn.setText(lbl)
-            color = ACCENT_ORANGE if lbl == "Dashboard" else TEXT_MUTED
-            btn.setIcon(create_text_icon(ic, color, size=36))
-            btn.setIconSize(QSize(36, 36))
-            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
-            btn.setFixedSize(90, 80)
-            btn.setStyleSheet(
-                f"color: {color}; border: none; font-weight: {'bold' if lbl == 'Dashboard' else 'normal'}; font-size: 11px; padding-top: 5px;"
-            )
-            self.sidebar_btns[lbl] = btn
-            sidebar_layout.addWidget(btn)
-
-        self.sidebar_btns["Core Control"].clicked.connect(self.open_core_control)
-        self.sidebar_btns["Power/Thermal"].clicked.connect(self.open_power_control)
-        sidebar_layout.addStretch()
-        main_layout.addWidget(sidebar)
-
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(10, 10, 10, 10)
-        content_layout.setSpacing(10)
-        main_layout.addWidget(content_widget, 1)
-
-        top_frame = QFrame()
-        top_frame.setStyleSheet(
-            f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 6px;"
-        )
-        top_frame.setFixedHeight(175)
-        top_layout = QHBoxLayout(top_frame)
-        plot_vbox = QVBoxLayout()
-        title_lbl = QLabel("⚡ PPT Power Tracking")
-        title_lbl.setStyleSheet("color: #cbd5e1; border: none; font-weight: bold;")
-        plot_vbox.addWidget(title_lbl)
-        self.main_plot = pg.PlotWidget()
-        self.main_plot.setBackground(None)
-        self.main_plot.hideButtons()
-        self.main_plot.enableAutoRange(axis="y", enable=True)
-        self.main_plot.setLimits(yMin=0)
-        self.main_plot.getAxis("left").setPen(TEXT_MUTED)
-        self.main_plot.getAxis("bottom").setPen(TEXT_MUTED)
-        self.main_plot.showGrid(x=False, y=True, alpha=0.3)
-        self.main_plot.setStyleSheet("border: none;")
-        self.power_curve = self.main_plot.plot(
-            list(range(100)),
-            list(self.power_history),
-            pen=pg.mkPen(ACCENT_RED, width=2),
-            fillLevel=0,
-            brush=(239, 68, 68, 60),
-        )
-        plot_vbox.addWidget(self.main_plot)
-        top_layout.addLayout(plot_vbox, 4)
-        temp_vbox = QVBoxLayout()
-        temp_title_lbl = QLabel("🌡 Max Core Temp")
-        temp_title_lbl.setStyleSheet("color: #cbd5e1; border: none; font-weight: bold;")
-        temp_vbox.addWidget(temp_title_lbl)
-        self.temp_plot = pg.PlotWidget()
-        self.temp_plot.setBackground(None)
-        self.temp_plot.hideButtons()
-        self.temp_plot.enableAutoRange(axis="y", enable=True)
-        self.temp_plot.getAxis("left").setPen(TEXT_MUTED)
-        self.temp_plot.getAxis("bottom").setPen(TEXT_MUTED)
-        self.temp_plot.showGrid(x=False, y=True, alpha=0.3)
-        self.temp_plot.setStyleSheet("border: none;")
-        self.temp_curve = self.temp_plot.plot(
-            list(range(100)),
-            list(self.temp_history),
-            pen=pg.mkPen(ACCENT_ORANGE, width=2),
-            fillLevel=0,
-            brush=(249, 115, 22, 60),
-        )
-        temp_vbox.addWidget(self.temp_plot)
-        top_layout.addLayout(temp_vbox, 3)
-        power_stats = QVBoxLayout()
-        self.power_lbl = QLabel("0.00 W / 162.00 W")
-        self.power_lbl.setStyleSheet(
-            f"color: {ACCENT_RED}; font-size: 22px; border: none;"
-        )
-        power_sub = QLabel("PPT Value / PPT Limit")
-        power_sub.setStyleSheet("color: #8b9bb4; border: none; font-size: 11px;")
-        power_stats.addStretch()
-        power_stats.addWidget(self.power_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
-        power_stats.addWidget(power_sub, alignment=Qt.AlignmentFlag.AlignCenter)
-        power_stats.addStretch()
-        top_layout.addLayout(power_stats, 2)
-        self.vcore_gauge = Gauge(
-            "Vcore\nPeak:", "0.000 V", "Avg: 0.000 V", 2.0, ACCENT_ORANGE
-        )
-        top_layout.addWidget(self.vcore_gauge)
-        content_layout.addWidget(top_frame)
-
-        middle_layout = QHBoxLayout()
-        cores_frame = QFrame()
-        cores_frame.setStyleSheet(f"border: 1px solid {BORDER}; border-radius: 6px;")
-        cores_layout = QVBoxLayout(cores_frame)
-        cores_title = QLabel("⌄ Core Telemetry")
-        cores_title.setStyleSheet("color: #cbd5e1; border: none;")
-        cores_layout.addWidget(cores_title)
-        grid = QGridLayout()
-        grid.setSpacing(8)
-        self.core_widgets = []
-        grid_columns = 8 if self.core_count > 8 else 4
-        for i in range(self.core_count):
-            cw = CoreWidget(f"{i // 8}-{i % 8}")
-            self.core_widgets.append(cw)
-            grid.addWidget(cw, i // grid_columns, i % grid_columns)
-        cores_layout.addLayout(grid)
-        middle_layout.addWidget(cores_frame, 3)
-
-        status_frame = QFrame()
-        status_frame.setStyleSheet(
-            f"border: 1px solid {BORDER}; border-radius: 6px; background-color: {BG_MAIN};"
-        )
-        status_layout = QVBoxLayout(status_frame)
-        status_layout.setSpacing(0)
-        status_title = QLabel("☷ System Status")
-        status_title.setStyleSheet("color: #cbd5e1; border: none; margin-bottom: 10px;")
-        status_layout.addWidget(status_title)
-        gauges_layout = QHBoxLayout()
-        stock_tdc = self.profile.stock_tdc if self.profile else 160
-        stock_edc = self.profile.stock_edc if self.profile else 225
-        self.edc_gauge = Gauge(
-            "EDC Limit:", "-- A", f"Stock: {stock_edc} A", stock_edc, ACCENT_ORANGE
-        )
-        self.tdc_gauge = Gauge(
-            "TDC:", "-- A", f"Limit: {stock_tdc} A", stock_tdc, ACCENT_RED
-        )
-        gauges_layout.addWidget(self.edc_gauge)
-        gauges_layout.addWidget(self.tdc_gauge)
-        status_layout.addLayout(gauges_layout)
-        self.clocks_lbl = add_status_row(status_layout, "Clocks: --")
-        self.thermal_lbl = add_status_row(status_layout, "Thermal: --")
-        self.domain_power_lbl = add_status_row(status_layout, "Power domains: --")
-        self.rail_primary_lbl = add_status_row(status_layout, "Voltage rails: --")
-        self.rail_secondary_lbl = add_status_row(status_layout, "CLDO rails: --")
-        self.fit_vid_lbl = add_status_row(status_layout, "FIT / VID: --")
-        self.misc_lbl = add_status_row(status_layout, "Additional telemetry: --", "#22d3ee")
-
-        middle_layout.addWidget(status_frame, 1)
-        content_layout.addLayout(middle_layout)
-
-        # --- PANNEAU DE LOGS MODIFIÉ ---
-        self.log_frame = QFrame()
-        self.log_frame.setStyleSheet(
-            f"background-color: {BG_INNER}; border: 1px solid {BORDER}; border-radius: 6px;"
-        )
-        self.log_frame.setFixedHeight(100)  # Hauteur de base
-
-        log_layout = QVBoxLayout(self.log_frame)
-        log_layout.setContentsMargins(10, 5, 10, 5)
-
-        log_header = QHBoxLayout()
-        log_title = QLabel("Log")
-        log_title.setStyleSheet("color: #f8fafc; font-weight: bold; border: none;")
-
-        # Le nouveau vrai bouton !
-        self.btn_toggle_log = QPushButton("🗖")
-        self.btn_toggle_log.setStyleSheet(
-            "color: #8b9bb4; border: none; font-size: 16px; background: transparent;"
-        )
-        self.btn_toggle_log.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_toggle_log.clicked.connect(self.toggle_log_size)
-
-        log_header.addWidget(log_title)
-        log_header.addStretch()
-        log_header.addWidget(
-            self.btn_toggle_log
-        )  # Ajout de notre bouton fonctionnel sans la croix
-        log_layout.addLayout(log_header)
-
-        text_row = QHBoxLayout()
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setStyleSheet(
-            "background-color: transparent; border: none; color: #8b9bb4; font-family: Consolas; font-size: 11px;"
-        )
-        text_row.addWidget(self.log_text)
-        log_layout.addLayout(text_row)
-        content_layout.addWidget(self.log_frame)
+        self._build_interface()
 
         self.log_msg(
             "Dashboard initialized. Listening to kernel logs...", "STATUS", ACCENT_GREEN
@@ -540,14 +402,263 @@ class GNRMaster(QMainWindow):
         self.timer.timeout.connect(self.update_data)
         self.timer.start(500)
 
-    # --- LOGIQUE D'AGRANDISSEMENT DES LOGS ---
-    def toggle_log_size(self):
-        if self.log_frame.height() <= 100:
-            self.log_frame.setFixedHeight(350)  # On déploie
-            self.btn_toggle_log.setText("🗗")  # Icône fenêtre réduite
-        else:
-            self.log_frame.setFixedHeight(100)  # On rétracte
-            self.btn_toggle_log.setText("🗖")  # Icône fenêtre max
+    def _build_interface(self):
+        root = QWidget()
+        root_layout = QHBoxLayout(root)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+        self.setCentralWidget(root)
+
+        sidebar = QFrame()
+        sidebar.setFixedWidth(138)
+        sidebar.setStyleSheet(f"background: #0e1420; border-right: 1px solid {BORDER};")
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(10, 16, 10, 16)
+        sidebar_layout.setSpacing(7)
+        brand = QLabel("GNR\nMASTER")
+        brand.setStyleSheet(
+            f"color: {ACCENT_ORANGE}; font-size: 16px; font-weight: 800; "
+            "letter-spacing: 2px; padding: 2px 8px 18px 8px;"
+        )
+        sidebar_layout.addWidget(brand)
+        self.nav_buttons = []
+        self.pages = QStackedWidget()
+        page_specs = [
+            ("Overview", "◫", self._build_overview_page),
+            ("Cores", "▦", self._build_cores_page),
+            ("System + L3", "◉", self._build_system_page),
+            ("Logs", "≡", self._build_logs_page),
+        ]
+        for index, (name, icon, builder) in enumerate(page_specs):
+            button = QPushButton(f"{icon}  {name}")
+            button.setCheckable(True)
+            button.setMinimumHeight(42)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.clicked.connect(lambda _checked, i=index: self._show_page(i))
+            self.nav_buttons.append(button)
+            sidebar_layout.addWidget(button)
+            self.pages.addWidget(builder())
+        sidebar_layout.addStretch()
+        controls = QLabel("CONTROLS")
+        controls.setStyleSheet(
+            f"color: {TEXT_MUTED}; font-size: 9px; font-weight: 700; padding: 0 8px;"
+        )
+        sidebar_layout.addWidget(controls)
+        core_control = QPushButton("⚡  Core Control")
+        power_control = QPushButton("⌁  Power / Thermal")
+        for button in (core_control, power_control):
+            button.setMinimumHeight(42)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setStyleSheet(self._control_button_style())
+            sidebar_layout.addWidget(button)
+        core_control.clicked.connect(self.open_core_control)
+        power_control.clicked.connect(self.open_power_control)
+        root_layout.addWidget(sidebar)
+        root_layout.addWidget(self.pages, 1)
+        self._show_page(0)
+
+    def _page(self, title, subtitle):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(20, 17, 20, 17)
+        layout.setSpacing(13)
+        heading = QLabel(title)
+        heading.setStyleSheet("font-size: 22px; font-weight: 750; color: #f8fafc;")
+        caption = QLabel(subtitle)
+        caption.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
+        layout.addWidget(heading)
+        layout.addWidget(caption)
+        return page, layout
+
+    def _build_overview_page(self):
+        page, layout = self._page(
+            "Overview", f"{self.profile.name if self.profile else 'Unsupported CPU'} · live telemetry"
+        )
+        cards = QHBoxLayout()
+        cards.setSpacing(10)
+        self.ppt_card = MetricCard("PPT", color=ACCENT_RED)
+        self.temp_card = MetricCard("MAX CORE TEMPERATURE", color=ACCENT_ORANGE)
+        self.socket_card = MetricCard("SOCKET POWER", color=ACCENT_CYAN)
+        self.vcore_card = MetricCard("VCORE", color=ACCENT_PURPLE)
+        self.tdc_card = MetricCard("TDC", color=ACCENT_GREEN)
+        for card in (self.ppt_card, self.temp_card, self.socket_card,
+                     self.vcore_card, self.tdc_card):
+            cards.addWidget(card)
+        layout.addLayout(cards)
+
+        charts = QHBoxLayout()
+        charts.setSpacing(10)
+        power_panel, self.main_plot = self._plot_panel("PPT POWER HISTORY")
+        self.power_curve = self.main_plot.plot(
+            list(range(100)), list(self.power_history),
+            pen=pg.mkPen(ACCENT_RED, width=2), fillLevel=0,
+            brush=(239, 68, 68, 55),
+        )
+        temp_panel, self.temp_plot = self._plot_panel("MAX CORE TEMPERATURE")
+        self.temp_curve = self.temp_plot.plot(
+            list(range(100)), list(self.temp_history),
+            pen=pg.mkPen(ACCENT_ORANGE, width=2), fillLevel=0,
+            brush=(249, 115, 22, 55),
+        )
+        charts.addWidget(power_panel)
+        charts.addWidget(temp_panel)
+        layout.addLayout(charts, 2)
+
+        ccd_row = QHBoxLayout()
+        self.ccd_cards = []
+        ccd_count = max(1, (self.core_count + 7) // 8)
+        for ccd in range(ccd_count):
+            card = MetricCard(f"CCD {ccd}", "--", "Waiting for core telemetry", ACCENT_CYAN)
+            self.ccd_cards.append(card)
+            ccd_row.addWidget(card)
+        layout.addLayout(ccd_row)
+        return page
+
+    def _plot_panel(self, title):
+        panel = TelemetryPanel(title)
+        plot = pg.PlotWidget()
+        plot.setBackground(None)
+        plot.hideButtons()
+        plot.enableAutoRange(axis="y", enable=True)
+        plot.setLimits(yMin=0)
+        plot.getAxis("left").setPen(TEXT_MUTED)
+        plot.getAxis("bottom").setPen(TEXT_MUTED)
+        plot.showGrid(x=False, y=True, alpha=0.25)
+        plot.setStyleSheet("border: none;")
+        panel.layout_box.addWidget(plot)
+        return panel, plot
+
+    def _build_cores_page(self):
+        page, layout = self._page(
+            "Core Telemetry", "Per-core frequency, voltage, temperature, power and C-state residency"
+        )
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 5, 0)
+        body_layout.setSpacing(14)
+        self.core_widgets = []
+        for ccd in range(max(1, (self.core_count + 7) // 8)):
+            section = TelemetryPanel(f"CCD {ccd}", f"Physical cores {ccd * 8}–{min(self.core_count - 1, ccd * 8 + 7)}")
+            grid = QGridLayout()
+            grid.setSpacing(9)
+            start = ccd * 8
+            stop = min(self.core_count, start + 8)
+            for core in range(start, stop):
+                widget = CoreWidget(f"{ccd}-{core - start}")
+                self.core_widgets.append(widget)
+                local = core - start
+                grid.addWidget(widget, local // 4, local % 4)
+            section.layout_box.addLayout(grid)
+            body_layout.addWidget(section)
+        body_layout.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
+        return page
+
+    def _build_system_page(self):
+        page, layout = self._page(
+            "System & L3", "Power limits, clocks, rails and experimental CCD/L3 candidates"
+        )
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body = QWidget()
+        grid = QGridLayout(body)
+        grid.setContentsMargins(0, 0, 5, 0)
+        grid.setSpacing(12)
+
+        limits = TelemetryPanel("POWER LIMITS")
+        gauge_row = QHBoxLayout()
+        stock_tdc = self.profile.stock_tdc if self.profile else 160
+        stock_edc = self.profile.stock_edc if self.profile else 225
+        self.edc_gauge = Gauge("EDC Limit", "-- A", f"Stock: {stock_edc} A",
+                               stock_edc, ACCENT_ORANGE)
+        self.tdc_gauge = Gauge("TDC", "-- A", f"Limit: {stock_tdc} A",
+                               stock_tdc, ACCENT_RED)
+        gauge_row.addWidget(self.edc_gauge)
+        gauge_row.addWidget(self.tdc_gauge)
+        limits.layout_box.addLayout(gauge_row)
+        self.thermal_lbl = limits.add_row("Thermal: --")
+
+        system = TelemetryPanel("CLOCKS & POWER DOMAINS")
+        self.clocks_lbl = system.add_row("Clocks: --")
+        self.domain_power_lbl = system.add_row("Power domains: --")
+        self.misc_lbl = system.add_row("Additional telemetry: --", ACCENT_CYAN)
+
+        rails = TelemetryPanel("VOLTAGE RAILS & FIT")
+        self.rail_primary_lbl = rails.add_row("Voltage rails: --")
+        self.rail_secondary_lbl = rails.add_row("CLDO rails: --")
+        self.fit_vid_lbl = rails.add_row("FIT / VID: --")
+
+        l3 = TelemetryPanel(
+            "EXPERIMENTAL L3 / CCD CANDIDATES",
+            "Low-confidence PM-table candidates. The d[index] is shown deliberately; "
+            "k10temp is an independent reference, not the same measurement.",
+        )
+        warning = QLabel("⚠  These fields are not yet validated as official L3 telemetry.")
+        warning.setWordWrap(True)
+        warning.setStyleSheet(
+            "color: #fbbf24; background: #3a2a16; border: 1px solid #854d0e; "
+            "border-radius: 5px; padding: 8px; font-size: 11px;"
+        )
+        l3_count = self.profile.l3_count if self.profile else 0
+        warning.setVisible(bool(l3_count))
+        l3.layout_box.addWidget(warning)
+        self.l3_labels = []
+        for ccd in range(max(1, l3_count)):
+            self.l3_labels.append(l3.add_row(f"CCD {ccd}: unavailable", ACCENT_CYAN))
+        if not l3_count:
+            self.l3_labels[0].setText("No L3 candidates mapped for this hardware profile")
+
+        grid.addWidget(limits, 0, 0)
+        grid.addWidget(system, 0, 1)
+        grid.addWidget(rails, 1, 0)
+        grid.addWidget(l3, 1, 1)
+        grid.setRowStretch(2, 1)
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
+        return page
+
+    def _build_logs_page(self):
+        page, layout = self._page(
+            "Kernel & Application Logs", "Filtered ryzen_smu / gnr_smu messages and application events"
+        )
+        panel = TelemetryPanel("LIVE LOG")
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setStyleSheet(
+            f"background: {BG_INNER}; border: none; color: #a5b4c8; "
+            "font-family: Consolas, monospace; font-size: 11px; padding: 8px;"
+        )
+        panel.layout_box.addWidget(self.log_text)
+        layout.addWidget(panel)
+        return page
+
+    def _nav_button_style(self):
+        return (
+            f"QPushButton {{ color: {TEXT_MUTED}; background: transparent; border: none; "
+            "border-radius: 6px; text-align: left; padding: 9px 11px; font-size: 12px; }} "
+            f"QPushButton:hover {{ background: {BG_INNER}; color: {TEXT_MAIN}; }} "
+            f"QPushButton:checked {{ background: #2b211d; color: {ACCENT_ORANGE}; "
+            "font-weight: 700; border-left: 3px solid #f97316; }}"
+        )
+
+    def _control_button_style(self):
+        return (
+            f"QPushButton {{ color: #cbd5e1; background: {BG_PANEL}; border: 1px solid {BORDER}; "
+            "border-radius: 6px; text-align: left; padding: 8px; font-size: 11px; }} "
+            f"QPushButton:hover {{ border-color: {ACCENT_ORANGE}; color: {TEXT_MAIN}; }}"
+        )
+
+    def _show_page(self, index):
+        self.pages.setCurrentIndex(index)
+        style = self._nav_button_style()
+        for i, button in enumerate(self.nav_buttons):
+            button.setStyleSheet(style)
+            button.setChecked(i == index)
 
     def log_msg(self, msg, level="INFO", color="#3b82f6"):
         self.log_text.append(f"<span style='color:{color};'>[{level}]</span> {msg}")
@@ -789,6 +900,38 @@ class GNRMaster(QMainWindow):
                 f"iGPU  {d[107]:.1f} W · {d[108]:.0f} MHz · {d[109]:.0f}%"
             )
 
+    def _update_l3_panel(self, d):
+        if not self.profile.l3_count:
+            return
+        for ccd in range(self.profile.l3_count):
+            logic_index = self.profile.l3_logic_power + ccd
+            vddm_index = self.profile.l3_vddm_power + ccd
+            temp_index = self.profile.l3_temperature + ccd
+            sensor = read_hwmon_temperature(f"Tccd{ccd + 1}")
+            sensor_text = f"{sensor:.1f} °C" if sensor is not None else "unavailable"
+            self.l3_labels[ccd].setText(
+                f"CCD {ccd}\n"
+                f"L3 temperature?  {d[temp_index]:.2f} °C  · d[{temp_index}]\n"
+                f"L3 logic power?  {d[logic_index]:.3f} W  · d[{logic_index}]\n"
+                f"L3 VDDM power?  {d[vddm_index]:.3f} W  · d[{vddm_index}]\n"
+                f"Independent k10temp Tccd{ccd + 1}:  {sensor_text}"
+            )
+
+    def _update_ccd_cards(self, d, frequencies, loads):
+        for ccd, card in enumerate(self.ccd_cards):
+            start = ccd * 8
+            stop = min(self.core_count, start + 8)
+            temps = [d[self.profile.core_temp + i] for i in range(start, stop)]
+            powers = [d[self.profile.core_power + i] for i in range(start, stop)]
+            valid_freqs = [value for value in frequencies[start:stop]
+                           if value is not None]
+            avg_freq = sum(valid_freqs) / len(valid_freqs) if valid_freqs else 0
+            avg_load = sum(loads[start:stop]) / max(1, stop - start)
+            card.set_value(
+                f"{max(temps):.1f} °C · {avg_freq:.0f} MHz",
+                f"Σ core power {sum(powers):.2f} W  ·  average C0/load {avg_load:.0f}%",
+            )
+
     def update_data(self):
         ok, why = hardware_supported()
         if not ok:
@@ -813,8 +956,11 @@ class GNRMaster(QMainWindow):
                     self.current_tdc = d[8]
                     pkg_pwr = d[3]  # PPT value: the figure the PPT limit applies to
 
-                    self.power_lbl.setText(
-                        f"{pkg_pwr:.2f} W / {self.current_ppt:.2f} W"
+                    ppt_percent = (pkg_pwr / self.current_ppt * 100
+                                   if self.current_ppt > 0 else 0)
+                    self.ppt_card.set_value(
+                        f"{pkg_pwr:.1f} / {self.current_ppt:.0f} W",
+                        f"{ppt_percent:.0f}% of configured PPT",
                     )
                     self.edc_gauge.setValue(
                         self.current_edc,
@@ -833,17 +979,33 @@ class GNRMaster(QMainWindow):
                               for i in range(self.core_count)]
                     vcore_peak = max(vcores)
                     vcore_avg = sum(vcores) / self.core_count
-                    self.vcore_gauge.setValue(
-                        vcore_peak, f"{vcore_peak:.3f} V", f"Avg: {vcore_avg:.3f} V"
+                    self.vcore_card.set_value(
+                        f"{vcore_peak:.3f} V", f"Peak · average {vcore_avg:.3f} V"
                     )
 
                     self._update_status_panel(d)
+                    self._update_l3_panel(d)
                     # Max core temp history
                     max_temp = max(d[self.profile.core_temp + i]
                                    for i in range(self.core_count))
+                    self.temp_card.set_value(
+                        f"{max_temp:.1f} °C", f"Tctl {d[11]:.1f} °C · limit {d[10]:.0f} °C"
+                    )
+                    socket_power = d[26] if self.profile.pm_version == 0x620205 else d[20]
+                    self.socket_card.set_value(
+                        f"{socket_power:.1f} W", "PM-table package/socket reading"
+                    )
+                    tdc_percent = (d[9] / self.current_tdc * 100
+                                   if self.current_tdc > 0 else 0)
+                    self.tdc_card.set_value(
+                        f"{d[9]:.1f} / {self.current_tdc:.0f} A",
+                        f"{tdc_percent:.0f}% of configured TDC",
+                    )
                     self.temp_history.append(max_temp)
                     self.temp_curve.setData(list(range(100)), list(self.temp_history))
 
+                    frequencies = []
+                    loads = []
                     for i in range(self.core_count):
                         volt = d[self.profile.core_voltage + i]
                         temp = d[self.profile.core_temp + i]
@@ -864,6 +1026,8 @@ class GNRMaster(QMainWindow):
                             activity = d[self.profile.core_activity + i]
                             states = (f"FIT {fit:.1f} · Light? {activity:.2f} · "
                                       f"C6 {cc6:.0f}%")
+                        frequencies.append(freq)
+                        loads.append(load)
                         cw = self.core_widgets[i]
                         cw.freq_lbl.setText(
                             f"{freq:.0f} MHz" if freq is not None else "-- MHz"
@@ -888,6 +1052,8 @@ class GNRMaster(QMainWindow):
 
                         self.core_load_history[i].append(load)
                         cw.bg.setOpts(height=list(self.core_load_history[i]))
+
+                    self._update_ccd_cards(d, frequencies, loads)
 
         except FileNotFoundError:
             pass

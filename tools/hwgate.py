@@ -32,6 +32,10 @@ class HardwareProfile:
     core_cc6: int
     core_boost_limit: int
     boost_limit_confident: bool
+    l3_logic_power: Optional[int]
+    l3_vddm_power: Optional[int]
+    l3_temperature: Optional[int]
+    l3_count: int
     ppt_msg: int
     tdc_msg: int
     edc_msg: int
@@ -67,6 +71,7 @@ PROFILES = {
         core_power=333, core_voltage=309, core_temp=317, core_frequency=325,
         core_fit=341, core_activity=357, core_c0=None, core_cc1=None,
         core_cc6=349, core_boost_limit=373, boost_limit_confident=True,
+        l3_logic_power=None, l3_vddm_power=None, l3_temperature=None, l3_count=0,
         # Measured by read-back: 0x3C moves d[8] (TDC), while 0x3D moves d[63] (EDC).
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=162, stock_tdc=120, stock_edc=180,
@@ -81,6 +86,10 @@ PROFILES = {
         core_power=301, core_voltage=317, core_temp=333, core_frequency=None,
         core_fit=349, core_activity=365, core_c0=381, core_cc1=397,
         core_cc6=413, core_boost_limit=445, boost_limit_confident=False,
+        # Low-confidence candidates from the 0x620205 table.  Keep these
+        # explicitly separate from validated fields until correlated traces
+        # establish their identities.
+        l3_logic_power=589, l3_vddm_power=591, l3_temperature=595, l3_count=2,
         # ZenStates-Core's Granite Ridge profile inherits the Zen 4 MP1 command
         # table: Fast/PPT=0x3E, TDC=0x3C, EDC=0x3D, per-core DLDO margin=0x35.
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
