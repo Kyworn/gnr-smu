@@ -329,22 +329,24 @@ class GNRMaster(QMainWindow):
 
     def _build_overview_page(self):
         page, layout = self._page("Sensors Status", "")
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
-        summary = QFrame()
-        summary.setStyleSheet(
-            f"background: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 6px;"
+        layout.setSpacing(8)
+        status_bar = QFrame()
+        status_bar.setObjectName("statusBar")
+        status_bar.setStyleSheet(
+            f"QFrame#statusBar {{ background: {BG_PANEL}; border: 1px solid {BORDER}; "
+            "border-radius: 4px; }"
         )
-        summary_layout = QHBoxLayout(summary)
-        summary_layout.setContentsMargins(10, 6, 10, 6)
-        summary_layout.setSpacing(4)
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(9, 5, 9, 5)
+        status_layout.setSpacing(7)
         self.summary_values = {}
-        self._add_summary_metric(summary_layout, "cpu", "CPU", ACCENT_ORANGE)
+        self._add_summary_metric(status_layout, "cpu", "CPU", ACCENT_ORANGE)
         for ccd in range(max(1, (self.core_count + 7) // 8)):
-            self._add_summary_metric(summary_layout, f"ccd{ccd}", f"CCD{ccd + 1}", ACCENT_CYAN)
-        self._add_summary_metric(summary_layout, "frequency", "FREQ AVG", ACCENT_PURPLE)
-        self._add_summary_metric(summary_layout, "power", "POWER", ACCENT_GREEN)
-        self._add_summary_metric(summary_layout, "limits", "LIMITS", TEXT_MAIN, minimum_width=285)
+            self._add_summary_metric(status_layout, f"ccd{ccd}", f"CCD{ccd + 1}", ACCENT_CYAN)
+        self._add_summary_metric(status_layout, "frequency", "FREQ", ACCENT_PURPLE)
+        self._add_summary_metric(status_layout, "power", "POWER", ACCENT_GREEN)
+        self._add_summary_metric(status_layout, "limits", "LIMITS", TEXT_MAIN, minimum_width=270)
+        status_layout.addStretch()
         self.reset_stats_button = QPushButton("Reset min/max")
         self.reset_stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reset_stats_button.setStyleSheet(self._control_button_style())
@@ -361,12 +363,10 @@ class GNRMaster(QMainWindow):
             f"background: {BG_PANEL}; border: 1px solid {BORDER}; padding: 4px 6px;"
         )
         self.update_rate_input.valueChanged.connect(self._set_update_interval)
-        toolbar.addWidget(summary)
-        toolbar.addStretch()
-        toolbar.addWidget(refresh_label)
-        toolbar.addWidget(self.update_rate_input)
-        toolbar.addWidget(self.reset_stats_button)
-        layout.addLayout(toolbar)
+        status_layout.addWidget(refresh_label)
+        status_layout.addWidget(self.update_rate_input)
+        status_layout.addWidget(self.reset_stats_button)
+        layout.addWidget(status_bar)
 
         self.sensor_tree = QTreeWidget()
         self.sensor_tree.setHeaderLabels(["Sensor", "Current", "Minimum", "Maximum", "Average"])
@@ -410,16 +410,16 @@ class GNRMaster(QMainWindow):
         layout.addWidget(self.sensor_tree)
         return page
 
-    def _add_summary_metric(self, layout, key, title, color, minimum_width=100):
+    def _add_summary_metric(self, layout, key, title, color, minimum_width=82):
         metric = QWidget()
         metric.setMinimumWidth(minimum_width)
-        metric_layout = QVBoxLayout(metric)
-        metric_layout.setContentsMargins(8, 0, 8, 0)
-        metric_layout.setSpacing(1)
+        metric_layout = QHBoxLayout(metric)
+        metric_layout.setContentsMargins(4, 0, 4, 0)
+        metric_layout.setSpacing(5)
         title_label = QLabel(title)
-        title_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 9px; font-weight: 700;")
+        title_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; font-weight: 700;")
         value_label = QLabel("--")
-        value_label.setStyleSheet(f"color: {color}; font-size: 13px; font-weight: 700;")
+        value_label.setStyleSheet(f"color: {color}; font-size: 12px; font-weight: 700;")
         metric_layout.addWidget(title_label)
         metric_layout.addWidget(value_label)
         layout.addWidget(metric)
