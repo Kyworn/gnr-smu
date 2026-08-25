@@ -2,6 +2,8 @@
 
 Telemetry map and SMU control tools for AMD Granite Ridge (Zen 5) under Linux.
 
+This is a fork of [Kyworn/gnr-smu](https://github.com/Kyworn/gnr-smu).
+
 Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
 The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
 command allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
@@ -17,7 +19,38 @@ The `ryzen_smu` driver exposes a model-specific PM table at
 1828 bytes / 457 float32 values; the 9950X3D table is 2452 bytes / 613 values. This
 repo contains the measured layouts and tools that select the correct profile.
 
+## What this fork changes
+
+- **Adds Ryzen 9 9950X3D support.** The original repo only supports the Ryzen 7
+  9800X3D. This fork adds a full second hardware profile for the 9950X3D — PM table
+  `0x620205`, all 16 per-core temperatures, and a model-specific SMU command
+  allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
+- **Unified HWiNFO-style dashboard.** The GUI ([`tools/gui/gnr_master.py`](tools/gui/gnr_master.py))
+  is a single sensor tree with current/min/max/average columns, replacing the older
+  page-per-category layout. A live status bar shows CPU/CCD temperatures, peak core
+  frequency, and PPT/TDC/EDC in one line.
+- **Live CPU EDC value.** `d[64]` was identified as the EDC current candidate
+  (idle ~7 A, tracks above TDC current under load) and is shown next to the confirmed
+  EDC limit; see `research/recheck_edc.py`.
+- **Actually verified the 9950X3D's "L3" candidates instead of trusting table
+  position.** They were never confirmed to begin with — just assumed from where
+  they sat in the table. Live per-CCD load tests (`research/recheck_l3.py`,
+  `research/l3_specificity.py`, `research/l3_specificity_controlled.py`) checked
+  which fields actually respond to their own CCD and to L3-cache traffic
+  specifically:
+  - `d[595]`/`d[596]` (now `ccd_l3_temperature`, renamed from the unjustified
+    "diode temperature" guess) are CCD-selective and, in a core-temperature-matched
+    test, heat up more under L3 cache-thrash load than under an equally-hot ALU-only
+    load — real evidence of L3 coupling.
+  - `d[611]`/`d[612]` and the candidate CCD power/VDDM fields (`d[589]-d[592]`) were
+    found to be **not** CCD-selective under the same test and have been removed from
+    the GUI rather than kept mislabelled.
+- **GUI usability fixes:** larger/consistently-styled refresh-rate and reset-min/max
+  controls, a "Dashboard" page that matches its sidebar entry, and a frequency summary
+  that reports the highest core clock instead of an average across all cores.
+
 ## Wanted: a dump from any other Granite Ridge part
+
 
 This is the one thing that would move the project forward, and it takes about ten
 seconds. Any still-unmapped Zen 5 desktop chip — 9600X, 9700X, 9900X, 9950X, or a

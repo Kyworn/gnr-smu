@@ -32,10 +32,21 @@ class HardwareProfile:
     core_cc6: int
     core_boost_limit: int
     boost_limit_confident: bool
-    l3_logic_power: Optional[int]
-    l3_vddm_power: Optional[int]
-    l3_temperature: Optional[int]
-    l3_count: int
+    # Unconfirmed CCD-adjacent candidates: table position suggested "L3", but
+    # a cache-thrash-vs-ALU comparison (research/l3_specificity.py) has not
+    # proven L3-cache coupling, so these are named for what was actually
+    # measured (CCD selectivity), not for an unproven L3 identity.
+    # 2026-08-25: d[589]/d[590] and d[591]/d[592] were checked for CCD
+    # selectivity the same way d[595]/d[596] were (busy-loop load pinned to
+    # CCD0 only, then CCD1 only). Unlike d[595]/d[596], both lanes of each
+    # pair rose almost identically regardless of which CCD was loaded
+    # (+3.68/+3.14 for CCD0 load vs +3.84/+3.69 for CCD1 load) — they are
+    # NOT per-CCD values and must not be presented as "CCDx power" in the
+    # GUI. Kept here only as raw research fields.
+    ccd_power_candidate: Optional[int]
+    ccd_vddm_candidate: Optional[int]
+    ccd_l3_temperature: Optional[int]
+    ccd_candidate_count: int
     ppt_msg: int
     tdc_msg: int
     edc_msg: int
@@ -59,6 +70,8 @@ class HardwareProfile:
     max_edc: int = 0
     co_msg: int = 0
     allow_smu_writes: bool = False
+    ccd_shared_temperature: Optional[int] = None
+    edc_value: Optional[int] = None
 
     @property
     def float_count(self):
@@ -71,7 +84,8 @@ PROFILES = {
         core_power=333, core_voltage=309, core_temp=317, core_frequency=325,
         core_fit=341, core_activity=357, core_c0=None, core_cc1=None,
         core_cc6=349, core_boost_limit=373, boost_limit_confident=True,
-        l3_logic_power=None, l3_vddm_power=None, l3_temperature=None, l3_count=0,
+        ccd_power_candidate=None, ccd_vddm_candidate=None,
+        ccd_l3_temperature=None, ccd_candidate_count=0,
         # Measured by read-back: 0x3C moves d[8] (TDC), while 0x3D moves d[63] (EDC).
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=162, stock_tdc=120, stock_edc=180,
@@ -89,7 +103,38 @@ PROFILES = {
         # Low-confidence candidates from the 0x620205 table.  Keep these
         # explicitly separate from validated fields until correlated traces
         # establish their identities.
-        l3_logic_power=589, l3_vddm_power=591, l3_temperature=595, l3_count=2,
+        #
+        # 2026-08-25, research/recheck_l3.py: loading CCD0 only raises d[595]
+        # (+13.8 K over baseline) far more than d[596] (+6.5 K), and loading
+        # CCD1 only reverses that — d[595]/d[596] are CCD-selective. d[611]/
+        # d[612] move together almost identically regardless of which CCD is
+        # loaded (shared/non-selective).
+        #
+        # 2026-08-25, research/l3_specificity.py: an ALU-only load and an
+        # L3-cache-thrash load pinned to the same CCD were compared. Per K of
+        # CCD-avg core-temp rise, the cache-thrash load moved every one of
+        # these lanes 3-6x more than the ALU load did (e.g. d[595] rose x1.54
+        # of the core-temp rise under cache-thrash vs only x0.43 under ALU
+        # load) — suggestive of L3 coupling, but it was a single uncontrolled
+        # run confounded by very different absolute core temperatures between
+        # the two loads (ALU hit ~69 °C avg, cache-thrash only ~41 °C), and
+        # cache-thrash also broke the earlier CCD-selectivity (d[596] rose
+        # almost as much as d[595] despite only CCD0 being loaded). Not proof.
+        #
+        # 2026-08-25, research/l3_specificity_controlled.py: repeated the test
+        # with the confound removed by throttling the ALU load (--cpu-load
+        # duty cycling) until its CCD0-avg core-temp rise matched the
+        # cache-thrash run's rise to within 0.44 K. At *matched* core-temp
+        # rise, d[595]/d[596] still rose an extra +4.2 K / +7.9 K under
+        # cache-thrash vs ALU — that excess cannot be explained by core
+        # heating, and is real evidence of L3-traffic coupling for this pair.
+        # d[611]/d[612] did the *opposite* (-2.7 K vs ALU at matched core
+        # temp), ruling out an L3-cache identity for that pair; it tracks
+        # something else (fabric/package-level heat, not cache traffic).
+        # Single run so far; kept named for what is confirmed either way.
+        ccd_shared_temperature=611,
+        ccd_power_candidate=589, ccd_vddm_candidate=591,
+        ccd_l3_temperature=595, ccd_candidate_count=2,
         # ZenStates-Core's Granite Ridge profile inherits the Zen 4 MP1 command
         # table: Fast/PPT=0x3E, TDC=0x3C, EDC=0x3D, per-core DLDO margin=0x35.
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
@@ -97,6 +142,11 @@ PROFILES = {
         max_ppt=300, max_tdc=250, max_edc=300,
         co_mode="packed_core_mask", co_msg=0x35,
         allow_smu_writes=True,
+        # d[64] sits right after EDC_LIMIT (d[63]) and behaves like the
+        # missing EDC_VALUE: idle ~7 A, rises to ~128 A under all-core load,
+        # and stays above the same run's TDC current (d[9], ~108 A) as a
+        # real peak-current reading should (research/recheck_edc.py).
+        edc_value=64,
     ),
 }
 
