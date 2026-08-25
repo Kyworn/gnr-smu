@@ -24,8 +24,7 @@ VERSION_PATH  = "/sys/kernel/ryzen_smu_drv/pm_table_version"
 JSON_OUTPUT   = "gnr_telemetry_dump.json"
 CSV_OUTPUT    = "gnr_telemetry.csv"
 
-# Key named fields: (column_name, float_index, unit). Fields before the per-core
-# struct are shared by the two validated table versions.
+# Key named fields: (column_name, float_index, unit).
 COMMON_FIELDS = [
     ("timestamp",        None,  "s"),
     # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected 2026-07-30.
@@ -36,38 +35,76 @@ COMMON_FIELDS = [
     ("tdc_value",        9,     "A"),
     ("thm_limit",        10,    "C"),
     ("tctl",             11,    "C"),    # direct °C, matches k10temp Tctl
-    ("edc_limit",        63,    "A"),    # 0x0FC = 180 A; no EDC_VALUE field found yet
-    ("hotspot_temp",     270,   "C"),    # direct °C, ~3 °C above Tctl
-    ("pkg_power",        20,    "W"),    # core+L3 domain, ~17 W below ppt_value
-("soc_power", 21, "W"),
-("soc_telemetry", 87, "metric"),  # efficiency metric, NOT voltage
-("soc_telemetry_metric", 95, "unit"),  # NOT voltage, use d[87] or d[53] instead
-    ("vcore_peak",       None,  "V"),   # computed: max(d[309..316])
-    ("vcore_avg",        None,  "V"),   # computed: mean(d[309..316])
+    ("edc_limit",        63,    "A"),
+    ("vcore_peak",       None,  "V"),   # computed from the profile's core-voltage block
+    ("vcore_avg",        None,  "V"),
     ("fclk",             71,    "MHz"),
     ("uclk",             75,    "MHz"),
     ("mclk",             79,    "MHz"),
-    ("igpu_power",       107,   "W"),
-    ("igpu_clock",       108,   "MHz"),
-    ("slow_temp_0",      298,   "C"),   # was "l3_temp_0"; domain unconfirmed, see PM_TABLE_MAP
-    ("slow_temp_1",      299,   "C"),   # was "l3_temp_1"
-    ("pkg_energy",       212,   "J"),
 ]
 
 
-def named_fields(profile):
+def global_fields(profile):
+    """Return only fields whose meaning is established for this table version."""
     fields = list(COMMON_FIELDS)
-    for core in range(profile.cores):
+    if profile.pm_version == 0x620205:
         fields += [
-            (f"c{core}_voltage", profile.core_voltage + core, "V"),
-            (f"c{core}_temp", profile.core_temp + core, "C"),
-            (f"c{core}_freq", profile.core_freq + core, "GHz"),
-            (f"c{core}_power", profile.core_power + core, "W"),
-            (f"c{core}_light_cstate_metric",
-             profile.core_light_cstate + core, "metric"),
-            (f"c{core}_c6_residency", profile.core_c6 + core, "%"),
-            (f"c{core}_boost_limit", profile.core_boost_limit + core, "GHz"),
+            ("fit_metric", 16, "metric"),
+            ("vid_limit", 18, "V"),
+            ("vid_live", 19, "V"),
+            ("vddcr_cpu_power", 20, "W"),
+            ("vddcr_soc_power", 21, "W"),
+            ("vddio_mem_power", 22, "W"),
+            ("vdd18_power", 23, "W"),
+            ("socket_power", 26, "W"),
+            ("vdd_misc", 58, "V"),
+            ("vddcr_soc", 83, "V"),
+            ("cldo_vddg_iod", 259, "V"),
+            ("cldo_vddg_ccd", 261, "V"),
+            ("cldo_vddp", 269, "V"),
         ]
+    else:
+        fields += [
+            ("hotspot_temp", 270, "C"),
+            ("pkg_power", 20, "W"),
+            ("soc_power", 21, "W"),
+            ("soc_telemetry", 87, "metric"),
+            ("soc_telemetry_metric", 95, "unit"),
+            ("igpu_power", 107, "W"),
+            ("igpu_clock", 108, "MHz"),
+            ("slow_temp_0", 298, "C"),
+            ("slow_temp_1", 299, "C"),
+            ("pkg_energy", 212, "J"),
+        ]
+    return fields
+
+
+def named_fields(profile):
+    fields = global_fields(profile)
+    for core in range(profile.cores):
+        fields.append((f"c{core}_power", profile.core_power + core, "W"))
+        fields.append((f"c{core}_voltage", profile.core_voltage + core, "V"))
+        fields.append((f"c{core}_temp", profile.core_temp + core, "C"))
+        if profile.core_frequency is not None:
+            fields.append(
+                (f"c{core}_frequency", profile.core_frequency + core, "GHz")
+            )
+        fields.append((f"c{core}_fit", profile.core_fit + core, "metric"))
+        if profile.core_activity is not None:
+            activity_name = (f"c{core}_activity_metric"
+                             if profile.core_c0 is not None
+                             else f"c{core}_light_cstate_metric")
+            fields.append(
+                (activity_name, profile.core_activity + core, "metric")
+            )
+        if profile.core_c0 is not None:
+            fields.append((f"c{core}_c0_residency", profile.core_c0 + core, "%"))
+        if profile.core_cc1 is not None:
+            fields.append((f"c{core}_cc1_residency", profile.core_cc1 + core, "%"))
+        fields.append((f"c{core}_cc6_residency", profile.core_cc6 + core, "%"))
+        boost_name = (f"c{core}_boost_limit" if profile.boost_limit_confident
+                      else f"c{core}_boost_limit_candidate")
+        fields.append((boost_name, profile.core_boost_limit + core, "GHz"))
     return fields
 
 
@@ -183,7 +220,7 @@ def cmd_csv(live_interval=None):
                     writer.writerow(floats_to_row(d, time.time(), profile, fields))
                     f.flush()
                     n += 1
-                    pkg = d[20]
+                    pkg = d[3]
                     max_temp = max(d[profile.core_temp + i]
                                    for i in range(profile.cores))
                     print(f"\r  [{n}] Pkg: {pkg:.1f}W  MaxTemp: {max_temp:.1f}°C", end="", flush=True)

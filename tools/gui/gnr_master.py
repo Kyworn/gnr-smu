@@ -4,6 +4,7 @@ import collections
 import subprocess
 import json
 import os
+import glob
 import pyqtgraph as pg
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
@@ -52,6 +53,38 @@ def create_text_icon(char, color, size=42):
     p.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, char)
     p.end()
     return QIcon(pixmap)
+
+
+def physical_core_cpu_ids():
+    """Return one logical CPU per physical core, ordered by package and core ID."""
+    cores = {}
+    for path in glob.glob("/sys/devices/system/cpu/cpu[0-9]*"):
+        cpu = int(os.path.basename(path)[3:])
+        topology = os.path.join(path, "topology")
+        try:
+            with open(os.path.join(topology, "physical_package_id")) as f:
+                package = int(f.read())
+            with open(os.path.join(topology, "core_id")) as f:
+                core = int(f.read())
+        except OSError:
+            continue
+        cores[(package, core)] = min(cpu, cores.get((package, core), cpu))
+    return [cores[key] for key in sorted(cores)]
+
+
+def add_status_row(layout, text, color="#f8fafc"):
+    container = QWidget()
+    container.setStyleSheet(f"border-top: 1px solid {BORDER};")
+    row = QVBoxLayout(container)
+    row.setContentsMargins(6, 3, 6, 3)
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setStyleSheet(
+        f"color: {color}; font-size: 12px; border: none; padding: 2px 0;"
+    )
+    row.addWidget(label)
+    layout.addWidget(container)
+    return label
 
 
 # ================= THREAD : REAL-TIME KERNEL LOGS =================
@@ -205,9 +238,17 @@ class CoreWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(0)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
         title = QLabel(f"⛛ Core [{core_id}]")
         title.setStyleSheet("color: #8b9bb4; border: none; font-size: 10px;")
-        layout.addWidget(title)
+        self.co_lbl = QLabel("CO: 0")
+        self.co_lbl.setStyleSheet(
+            f"color: {ACCENT_PURPLE}; border: none; font-size: 9px; font-weight: bold;"
+        )
+        title_row.addWidget(title)
+        title_row.addWidget(self.co_lbl, alignment=Qt.AlignmentFlag.AlignRight)
+        layout.addLayout(title_row)
         self.freq_lbl = QLabel("0.00 MHz")
         self.freq_lbl.setStyleSheet(
             f"color: {ACCENT_RED}; border: none; font-size: 18px; font-weight: bold; margin-top: 2px;"
@@ -215,15 +256,7 @@ class CoreWidget(QFrame):
         layout.addWidget(self.freq_lbl)
         self.max_lbl = QLabel("Max: 0.00 MHz")
         self.max_lbl.setStyleSheet("color: #8b9bb4; border: none; font-size: 10px;")
-        self.co_lbl = QLabel("CO: 0")
-        self.co_lbl.setStyleSheet(
-            f"color: {ACCENT_PURPLE}; border: none; font-size: 10px; font-weight: bold;"
-        )
-        h_lyt = QHBoxLayout()
-        h_lyt.setContentsMargins(0, 0, 0, 0)
-        h_lyt.addWidget(self.max_lbl)
-        h_lyt.addWidget(self.co_lbl, alignment=Qt.AlignmentFlag.AlignRight)
-        layout.addLayout(h_lyt)
+        layout.addWidget(self.max_lbl)
         vt_layout = QHBoxLayout()
         vt_layout.setContentsMargins(0, 5, 0, 5)
         self.volt_lbl = QLabel("⚡ 0.000 V")
@@ -236,6 +269,10 @@ class CoreWidget(QFrame):
         self.pwr_lbl = QLabel("0.00 W")
         self.pwr_lbl.setStyleSheet("color: #fbbf24; border: none; font-size: 10px;")
         layout.addWidget(self.pwr_lbl)
+        self.state_lbl = QLabel("FIT -- · C-state --")
+        self.state_lbl.setStyleSheet("color: #94a3b8; border: none; font-size: 8px;")
+        self.state_lbl.setWordWrap(True)
+        layout.addWidget(self.state_lbl)
         load_lbl = QLabel("Load")
         load_lbl.setStyleSheet("color: #64748b; border: none; font-size: 8px;")
         layout.addWidget(load_lbl)
@@ -281,6 +318,7 @@ class GNRMaster(QMainWindow):
         limits = self._read_pm_limits()
         self.current_ppt, self.current_tdc, self.current_edc = limits or (None, None, None)
         self.current_co = self.load_co_config()
+        self.core_cpu_ids = physical_core_cpu_ids()
         self.power_history = collections.deque([0.0] * 100, maxlen=100)
         self.temp_history = collections.deque([40.0] * 100, maxlen=100)
         self.core_load_history = [
@@ -339,7 +377,7 @@ class GNRMaster(QMainWindow):
         top_frame.setFixedHeight(175)
         top_layout = QHBoxLayout(top_frame)
         plot_vbox = QVBoxLayout()
-        title_lbl = QLabel("⚡ Package Power Tracking")
+        title_lbl = QLabel("⚡ PPT Power Tracking")
         title_lbl.setStyleSheet("color: #cbd5e1; border: none; font-weight: bold;")
         plot_vbox.addWidget(title_lbl)
         self.main_plot = pg.PlotWidget()
@@ -386,7 +424,7 @@ class GNRMaster(QMainWindow):
         self.power_lbl.setStyleSheet(
             f"color: {ACCENT_RED}; font-size: 22px; border: none;"
         )
-        power_sub = QLabel("Package Power / PPT Limit")
+        power_sub = QLabel("PPT Value / PPT Limit")
         power_sub.setStyleSheet("color: #8b9bb4; border: none; font-size: 11px;")
         power_stats.addStretch()
         power_stats.addWidget(self.power_lbl, alignment=Qt.AlignmentFlag.AlignCenter)
@@ -427,82 +465,24 @@ class GNRMaster(QMainWindow):
         status_title.setStyleSheet("color: #cbd5e1; border: none; margin-bottom: 10px;")
         status_layout.addWidget(status_title)
         gauges_layout = QHBoxLayout()
-        self.edc_gauge = Gauge("EDC:", "180 A", "/ 225 A", 225, ACCENT_ORANGE)
-        self.edc_gauge.setValue(180)
-        self.tdc_gauge = Gauge("TDC:", "125 A", "/ 160 A", 160, ACCENT_RED)
-        self.tdc_gauge.setValue(125)
+        stock_tdc = self.profile.stock_tdc if self.profile else 160
+        stock_edc = self.profile.stock_edc if self.profile else 225
+        self.edc_gauge = Gauge(
+            "EDC Limit:", "-- A", f"Stock: {stock_edc} A", stock_edc, ACCENT_ORANGE
+        )
+        self.tdc_gauge = Gauge(
+            "TDC:", "-- A", f"Limit: {stock_tdc} A", stock_tdc, ACCENT_RED
+        )
         gauges_layout.addWidget(self.edc_gauge)
         gauges_layout.addWidget(self.tdc_gauge)
         status_layout.addLayout(gauges_layout)
-        status_layout.addStretch()
-        fclk_container = QWidget()
-        fclk_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        fclk_lay = QVBoxLayout(fclk_container)
-        self.fclk_lbl = QLabel("Fabric Clock (FCLK):\n2000 MHz")
-        self.fclk_lbl.setStyleSheet(
-            "color: #f8fafc; font-size: 14px; border: none; padding: 5px 0;"
-        )
-        fclk_lay.addWidget(self.fclk_lbl)
-        status_layout.addWidget(fclk_container)
-        uclk_container = QWidget()
-        uclk_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        uclk_lay = QVBoxLayout(uclk_container)
-        self.uclk_lbl = QLabel("Memory Clock (UCLK):\n3000 MHz")
-        self.uclk_lbl.setStyleSheet(
-            "color: #f8fafc; font-size: 14px; border: none; padding: 5px 0;"
-        )
-        uclk_lay.addWidget(self.uclk_lbl)
-        status_layout.addWidget(uclk_container)
-
-        mclk_container = QWidget()
-        mclk_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        mclk_lay = QVBoxLayout(mclk_container)
-        self.mclk_lbl = QLabel("Memory Clock (MCLK):\n1000 MHz")
-        self.mclk_lbl.setStyleSheet(
-            "color: #f8fafc; font-size: 14px; border: none; padding: 5px 0;"
-        )
-        mclk_lay.addWidget(self.mclk_lbl)
-        status_layout.addWidget(mclk_container)
-
-        thermal_container = QWidget()
-        thermal_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        thermal_lay = QVBoxLayout(thermal_container)
-        self.thermal_lbl = QLabel("Tctl: -- °C\nHotspot: -- °C")
-        self.thermal_lbl.setStyleSheet(
-            "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
-        )
-        thermal_lay.addWidget(self.thermal_lbl)
-        status_layout.addWidget(thermal_container)
-
-        soc_container = QWidget()
-        soc_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        soc_lay = QVBoxLayout(soc_container)
-        self.soc_lbl = QLabel("SoC: -- W / -- V (telem: --)")
-        self.soc_lbl.setStyleSheet(
-            "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
-        )
-        soc_lay.addWidget(self.soc_lbl)
-        status_layout.addWidget(soc_container)
-
-        boost_container = QWidget()
-        boost_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        boost_lay = QVBoxLayout(boost_container)
-        self.boost_lbl = QLabel("Max Boost: -- GHz")
-        self.boost_lbl.setStyleSheet(
-            "color: #f8fafc; font-size: 13px; border: none; padding: 5px 0;"
-        )
-        boost_lay.addWidget(self.boost_lbl)
-        status_layout.addWidget(boost_container)
-
-        igpu_container = QWidget()
-        igpu_container.setStyleSheet(f"border-top: 1px solid {BORDER};")
-        igpu_lay = QVBoxLayout(igpu_container)
-        self.igpu_lbl = QLabel("iGPU: -- W / -- MHz / --%")
-        self.igpu_lbl.setStyleSheet(
-            "color: #22d3ee; font-size: 13px; border: none; padding: 5px 0;"
-        )
-        igpu_lay.addWidget(self.igpu_lbl)
-        status_layout.addWidget(igpu_container)
+        self.clocks_lbl = add_status_row(status_layout, "Clocks: --")
+        self.thermal_lbl = add_status_row(status_layout, "Thermal: --")
+        self.domain_power_lbl = add_status_row(status_layout, "Power domains: --")
+        self.rail_primary_lbl = add_status_row(status_layout, "Voltage rails: --")
+        self.rail_secondary_lbl = add_status_row(status_layout, "CLDO rails: --")
+        self.fit_vid_lbl = add_status_row(status_layout, "FIT / VID: --")
+        self.misc_lbl = add_status_row(status_layout, "Additional telemetry: --", "#22d3ee")
 
         middle_layout.addWidget(status_frame, 1)
         content_layout.addLayout(middle_layout)
@@ -744,6 +724,71 @@ class GNRMaster(QMainWindow):
         except Exception:
             return stock
 
+    def _core_frequency_mhz(self, table, core):
+        """Use the PM-table frequency where mapped, otherwise Linux cpufreq."""
+        if self.profile.core_frequency is not None:
+            return table[self.profile.core_frequency + core] * 1000
+        if core >= len(self.core_cpu_ids):
+            return None
+        path = (f"/sys/devices/system/cpu/cpu{self.core_cpu_ids[core]}/"
+                "cpufreq/scaling_cur_freq")
+        try:
+            with open(path) as f:
+                return float(f.read()) / 1000
+        except (OSError, ValueError):
+            return None
+
+    def _update_status_panel(self, d):
+        self.clocks_lbl.setText(
+            f"Clocks  FCLK {d[71]:.0f} · UCLK {d[75]:.0f} · MCLK {d[79]:.0f} MHz"
+        )
+        if self.profile.pm_version == 0x620205:
+            self.thermal_lbl.setText(
+                f"Thermal  Tctl {d[11]:.1f} °C · Limit {d[10]:.0f} °C"
+            )
+            self.domain_power_lbl.setText(
+                f"Power  CPU {d[20]:.1f} · SoC {d[21]:.1f} · "
+                f"VDDIO {d[22]:.1f} · VDD18 {d[23]:.1f} W"
+            )
+            self.rail_primary_lbl.setText(
+                f"Rails  VSOC {d[83]:.3f} · VDD_MISC {d[58]:.3f} V"
+            )
+            self.rail_secondary_lbl.setText(
+                f"CLDO  VDDG IOD {d[259]:.3f} · CCD {d[261]:.3f} · "
+                f"VDDP {d[269]:.3f} V"
+            )
+            self.fit_vid_lbl.setText(
+                f"FIT / VID  FIT {d[16]:.1f} · VID {d[19]:.3f} / "
+                f"{d[18]:.3f} V max"
+            )
+            self.misc_lbl.setText(f"Socket power  {d[26]:.1f} W")
+        else:
+            self.hotspot_history.append(d[270])
+            hotspot = sum(self.hotspot_history) / len(self.hotspot_history)
+            self.thermal_lbl.setText(
+                f"Thermal  Tctl {d[11]:.1f} °C · Hotspot {hotspot:.1f} °C · "
+                f"Limit {d[10]:.0f} °C"
+            )
+            self.domain_power_lbl.setText(
+                f"Power  Package {d[20]:.1f} · SoC {d[21]:.1f} · "
+                f"CPU telem {d[22]:.1f} · VDDIO {d[23]:.1f} W"
+            )
+            self.rail_primary_lbl.setText(
+                f"Rails  VSOC {d[83]:.3f} · VDDIO {d[58]:.3f} · "
+                f"SoC VID {d[271]:.3f} V"
+            )
+            self.rail_secondary_lbl.setText(
+                f"SoC rails  {d[259]:.3f} / {d[261]:.3f} · "
+                f"CPU VID {d[269]:.3f} V"
+            )
+            self.fit_vid_lbl.setText(
+                f"Vcore  Peak {d[18]:.3f} · Avg {d[19]:.3f} V · "
+                f"Max boost {d[272]:.3f} GHz"
+            )
+            self.misc_lbl.setText(
+                f"iGPU  {d[107]:.1f} W · {d[108]:.0f} MHz · {d[109]:.0f}%"
+            )
+
     def update_data(self):
         ok, why = hardware_supported()
         if not ok:
@@ -771,14 +816,15 @@ class GNRMaster(QMainWindow):
                     self.power_lbl.setText(
                         f"{pkg_pwr:.2f} W / {self.current_ppt:.2f} W"
                     )
-                    # ponytail: no EDC_VALUE float identified yet, so limit only
                     self.edc_gauge.setValue(
-                        self.current_edc, main_text=f"{self.current_edc:.0f} A"
+                        self.current_edc,
+                        main_text=f"{self.current_edc:.0f} A",
+                        bottom_text=f"Stock: {self.profile.stock_edc} A",
                     )
                     self.tdc_gauge.setValue(
-                        self.current_tdc,
-                        main_text=f"{self.current_tdc:.0f} A",
-                        bottom_text=f"Now: {d[9]:.1f} A",
+                        d[9],
+                        main_text=f"{d[9]:.1f} A",
+                        bottom_text=f"Limit: {self.current_tdc:.0f} A",
                     )
                     self.power_history.append(pkg_pwr)
                     self.power_curve.setData(list(range(100)), list(self.power_history))
@@ -791,26 +837,7 @@ class GNRMaster(QMainWindow):
                         vcore_peak, f"{vcore_peak:.3f} V", f"Avg: {vcore_avg:.3f} V"
                     )
 
-                    # Tctl + hotspot: direct °C, cross-validated vs k10temp.
-                    # d[298]/d[299] used to be shown here as "L3/V-Cache" but they
-                    # barely move under load — domain unconfirmed, so show real temps.
-                    self.hotspot_history.append(d[270])
-                    hotspot = sum(self.hotspot_history) / len(self.hotspot_history)
-                    self.thermal_lbl.setText(
-                        f"Tctl: {d[11]:.1f} °C\nHotspot: {hotspot:.1f} °C"
-                    )
-                    self.soc_lbl.setText(
-                        f"SoC: {d[21]:.1f} W / {d[271]:.3f} V (telem: {d[273]:.2f})"
-                    )
-                    self.boost_lbl.setText(f"Max Boost: {d[272]:.2f} GHz")
-                    # iGPU power (idx 107 = 0x1AC) + iGPU clock (idx 108 = 0x1B0)
-                    self.igpu_lbl.setText(
-                        f"iGPU: {d[107]:.1f} W / {d[108]:.0f} MHz / {d[109]:.0f}%"
-                    )
-                    # FCLK (idx 71 = 0x11C) / UCLK (idx 75 = 0x12C) dynamic
-                    self.fclk_lbl.setText(f"Fabric Clock (FCLK):\n{d[71]:.0f} MHz")
-                    self.uclk_lbl.setText(f"Memory Clock (UCLK):\n{d[75]:.0f} MHz")
-                    self.mclk_lbl.setText(f"Memory Clock (MCLK):\n{d[79]:.0f} MHz")
+                    self._update_status_panel(d)
                     # Max core temp history
                     max_temp = max(d[self.profile.core_temp + i]
                                    for i in range(self.core_count))
@@ -820,18 +847,43 @@ class GNRMaster(QMainWindow):
                     for i in range(self.core_count):
                         volt = d[self.profile.core_voltage + i]
                         temp = d[self.profile.core_temp + i]
-                        freq = d[self.profile.core_freq + i] * 1000
+                        freq = self._core_frequency_mhz(d, i)
                         max_freq = d[self.profile.core_boost_limit + i] * 1000
-                        c6_residency = d[self.profile.core_c6 + i]
-                        load = max(0, min(100, 100 - c6_residency))
+                        power = d[self.profile.core_power + i]
+                        fit = d[self.profile.core_fit + i]
+                        cc6 = d[self.profile.core_cc6 + i]
+                        if self.profile.core_c0 is not None:
+                            c0 = d[self.profile.core_c0 + i]
+                            cc1 = d[self.profile.core_cc1 + i]
+                            load = max(0, min(100, c0))
+                            activity = d[self.profile.core_activity + i]
+                            states = (f"FIT {fit:.1f} · Act? {activity:.2f}\n"
+                                      f"C0 {c0:.0f}% · C1 {cc1:.0f}% · C6 {cc6:.0f}%")
+                        else:
+                            load = max(0, min(100, 100 - cc6))
+                            activity = d[self.profile.core_activity + i]
+                            states = (f"FIT {fit:.1f} · Light? {activity:.2f} · "
+                                      f"C6 {cc6:.0f}%")
                         cw = self.core_widgets[i]
-                        cw.freq_lbl.setText(f"{freq:.2f} MHz")
-                        cw.max_lbl.setText(f"Max: {max_freq:.2f} MHz")
+                        cw.freq_lbl.setText(
+                            f"{freq:.0f} MHz" if freq is not None else "-- MHz"
+                        )
+                        if self.profile.core_frequency is None:
+                            cw.freq_lbl.setToolTip("Live frequency from Linux cpufreq")
+                        limit_label = ("Limit" if self.profile.boost_limit_confident
+                                       else "Boost?")
+                        cw.max_lbl.setText(f"{limit_label}: {max_freq:.0f} MHz")
+                        if not self.profile.boost_limit_confident:
+                            cw.max_lbl.setToolTip(
+                                "PM-table boost-limit candidate; not independently confirmed"
+                            )
                         cw.volt_lbl.setText(f"⚡ {volt:.3f} V")
-                        cw.temp_lbl.setText(f"🌡 {temp:.2f} C")
+                        cw.temp_lbl.setText(f"🌡 {temp:.1f} °C")
                         cw.co_lbl.setText(f"CO: {self.current_co[i]}")
-                        cw.pwr_lbl.setText(
-                            f"{d[self.profile.core_power + i]:.2f} W"
+                        cw.pwr_lbl.setText(f"Power: {power:.2f} W")
+                        cw.state_lbl.setText(states)
+                        cw.state_lbl.setToolTip(
+                            "Act?/Light? marks a lower-confidence PM-table metric"
                         )
 
                         self.core_load_history[i].append(load)

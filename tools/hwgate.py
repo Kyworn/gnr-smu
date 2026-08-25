@@ -8,6 +8,7 @@ does not establish that mailbox commands or Curve Optimizer IDs are safe on it.
 
 from dataclasses import dataclass
 import struct
+from typing import Optional
 
 VERSION_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_version"
 SIZE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_size"
@@ -20,13 +21,17 @@ class HardwareProfile:
     pm_version: int
     table_size: int
     cores: int
+    core_power: int
     core_voltage: int
     core_temp: int
-    core_freq: int
-    core_power: int
-    core_c6: int
-    core_light_cstate: int
+    core_frequency: Optional[int]
+    core_fit: int
+    core_activity: Optional[int]
+    core_c0: Optional[int]
+    core_cc1: Optional[int]
+    core_cc6: int
     core_boost_limit: int
+    boost_limit_confident: bool
     ppt_msg: int
     tdc_msg: int
     edc_msg: int
@@ -59,11 +64,10 @@ class HardwareProfile:
 PROFILES = {
     (0x620105, 1828, 8): HardwareProfile(
         "AMD Ryzen 7 9800X3D", "AMD Ryzen 7 9800X3D", 0x620105, 1828, 8,
-        core_voltage=309, core_temp=317, core_freq=325, core_power=333,
-        core_c6=349, core_light_cstate=357, core_boost_limit=373,
-        # Measured by read-back, not assumed: research/probe_tdc_edc.py writes a
-        # distinctive value and reports which PM field moved. 0x3C moves d[8] (TDC),
-        # 0x3D moves d[63] (EDC). The reverse order was this repo's for months.
+        core_power=333, core_voltage=309, core_temp=317, core_frequency=325,
+        core_fit=341, core_activity=357, core_c0=None, core_cc1=None,
+        core_cc6=349, core_boost_limit=373, boost_limit_confident=True,
+        # Measured by read-back: 0x3C moves d[8] (TDC), while 0x3D moves d[63] (EDC).
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=162, stock_tdc=120, stock_edc=180,
         mp1_smn=(0x3B10530, 0x3B1057C, 0x3B109C4),
@@ -74,8 +78,9 @@ PROFILES = {
     ),
     (0x620205, 2452, 16): HardwareProfile(
         "AMD Ryzen 9 9950X3D", "AMD Ryzen 9 9950X3D", 0x620205, 2452, 16,
-        core_voltage=317, core_temp=333, core_freq=349, core_power=365,
-        core_c6=397, core_light_cstate=413, core_boost_limit=445,
+        core_power=301, core_voltage=317, core_temp=333, core_frequency=None,
+        core_fit=349, core_activity=365, core_c0=381, core_cc1=397,
+        core_cc6=413, core_boost_limit=445, boost_limit_confident=False,
         # ZenStates-Core's Granite Ridge profile inherits the Zen 4 MP1 command
         # table: Fast/PPT=0x3E, TDC=0x3C, EDC=0x3D, per-core DLDO margin=0x35.
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,

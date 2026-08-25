@@ -6,6 +6,10 @@ Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
 The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
 command allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
 
+On the 9950X3D, no PM-table block is currently established as live per-core
+frequency. The GUI uses Linux `cpufreq` for that value and keeps the mapped PM
+blocks labelled as Power, FIT, Activity, C0, CC1 and CC6 instead of guessing.
+
 ![GNR-SMU Dashboard](assets/screenshot.png)
 
 The `ryzen_smu` driver exposes a model-specific PM table at
