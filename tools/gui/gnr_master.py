@@ -220,6 +220,14 @@ class GNRMaster(QMainWindow):
             f"background-color: {BG_MAIN}; color: {TEXT_MAIN}; font-family: 'Segoe UI';"
         )
 
+        self.config = self._load_config()
+        self.sensor_update_ms = self._sanitize_update_interval(
+            self.config.get("sensor_update_ms", 500)
+        )
+        self._preferences_timer = QTimer(self)
+        self._preferences_timer.setSingleShot(True)
+        self._preferences_timer.timeout.connect(self._save_sensor_preferences)
+
         # None on unvalidated hardware: no profile means no defensible default, and
         # the write dialog must not be pre-filled with another part's numbers. The
         # guardrails already block writes there, so this only affects what is shown.
@@ -242,7 +250,7 @@ class GNRMaster(QMainWindow):
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_data)
-        self.timer.start(500)
+        self.timer.start(self.sensor_update_ms)
 
     def _build_interface(self):
         root = QWidget()
@@ -321,8 +329,22 @@ class GNRMaster(QMainWindow):
         self.reset_stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.reset_stats_button.setStyleSheet(self._control_button_style())
         self.reset_stats_button.clicked.connect(self._reset_sensor_stats)
+        refresh_label = QLabel("Refresh")
+        refresh_label.setStyleSheet(f"font-size: 11px; color: {TEXT_MUTED};")
+        self.update_rate_input = QSpinBox()
+        self.update_rate_input.setRange(100, 10000)
+        self.update_rate_input.setSingleStep(100)
+        self.update_rate_input.setSuffix(" ms")
+        self.update_rate_input.setValue(self.sensor_update_ms)
+        self.update_rate_input.setToolTip("Telemetry refresh interval. Saved in the GUI configuration.")
+        self.update_rate_input.setStyleSheet(
+            f"background: {BG_PANEL}; border: 1px solid {BORDER}; padding: 4px 6px;"
+        )
+        self.update_rate_input.valueChanged.connect(self._set_update_interval)
         toolbar.addWidget(hint)
         toolbar.addStretch()
+        toolbar.addWidget(refresh_label)
+        toolbar.addWidget(self.update_rate_input)
         toolbar.addWidget(self.reset_stats_button)
         layout.addLayout(toolbar)
 
@@ -344,10 +366,23 @@ class GNRMaster(QMainWindow):
         )
         header = self.sensor_tree.header()
         header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionsMovable(True)
+        header.setSectionsClickable(True)
+        header.setMinimumSectionSize(80)
+        header.setToolTip("Drag column headers to reorder them; drag separators to resize.")
+        for column in range(5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+        self.sensor_tree.setColumnWidth(0, 620)
         for column in range(1, 5):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
-            self.sensor_tree.setColumnWidth(column, 142)
+            self.sensor_tree.setColumnWidth(column, 145)
+        saved_header = self.config.get("sensor_header_state")
+        if isinstance(saved_header, str):
+            try:
+                header.restoreState(QByteArray.fromBase64(saved_header.encode("ascii")))
+            except UnicodeEncodeError:
+                pass
+        header.sectionMoved.connect(self._queue_sensor_preferences)
+        header.sectionResized.connect(self._queue_sensor_preferences)
         self.sensor_items = {}
         self.sensor_units = {}
         self.sensor_stats = {}
@@ -432,7 +467,7 @@ class GNRMaster(QMainWindow):
             ("vddio_power", "VDDIO MEM Power"), ("vdd18_power", "VDD18 Power"),
         ):
             self._add_sensor(power, key, label, "W")
-        core_power = self._add_sensor_group(power, "Core Powers", expanded=False)
+        core_power = self._add_sensor_group(power, "Core Powers")
         for core in range(self.core_count):
             self._add_sensor(core_power, f"core_power_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "W")
@@ -455,29 +490,24 @@ class GNRMaster(QMainWindow):
                            ("vddp", "CLDO_VDDP"), ("vid", "CPU VID"),
                            ("vid_limit", "VID Limit")):
             self._add_sensor(voltages, key, label, "V")
-        core_voltages = self._add_sensor_group(voltages, "Core Voltages", expanded=False)
+        core_voltages = self._add_sensor_group(voltages, "Core Voltages")
         for core in range(self.core_count):
             self._add_sensor(core_voltages, f"core_voltage_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "V")
 
-        residency = self._add_sensor_group(root, "Core residency & FIT", expanded=False)
+        residency = self._add_sensor_group(root, "Core residency & FIT")
         for core in range(self.core_count):
             ccd = core // 8 + 1
             self._add_sensor(residency, f"core_fit_{core}", f"Core {core} FIT (CCD{ccd})", "")
             self._add_sensor(residency, f"core_c0_{core}", f"Core {core} C0 residency (CCD{ccd})", "%")
             self._add_sensor(residency, f"core_cc1_{core}", f"Core {core} CC1 residency (CCD{ccd})", "%")
             self._add_sensor(residency, f"core_cc6_{core}", f"Core {core} CC6 residency (CCD{ccd})", "%")
-        co_config = self._add_sensor_group(root, "Configured Curve Optimizer", expanded=False)
+        co_config = self._add_sensor_group(root, "Configured Curve Optimizer")
         for core in range(self.core_count):
             self._add_sensor(co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int")
-        self.sensor_tree.expandItem(root)
-        self.sensor_tree.expandItem(temperatures)
-        self.sensor_tree.expandItem(core_temps)
-        self.sensor_tree.expandItem(l3)
-        self.sensor_tree.expandItem(limits)
-        self.sensor_tree.expandItem(power)
-        self.sensor_tree.expandItem(clocks)
-        self.sensor_tree.expandItem(core_clocks)
+        for item in (root, temperatures, core_temps, l3, limits, power, core_power,
+                     clocks, core_clocks, voltages, core_voltages, residency, co_config):
+            self.sensor_tree.expandItem(item)
 
     def _format_sensor_value(self, value, unit):
         if value is None:
@@ -564,24 +594,59 @@ class GNRMaster(QMainWindow):
             self.log_text.verticalScrollBar().maximum()
         )
 
+    def _load_config(self):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _sanitize_update_interval(value):
+        try:
+            return max(100, min(10000, int(value)))
+        except (TypeError, ValueError):
+            return 500
+
+    def _save_config(self, updates):
+        try:
+            self.config.update(updates)
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            with open(CONFIG_PATH, "w") as f:
+                json.dump(self.config, f, indent=2, sort_keys=True)
+            return True
+        except Exception:
+            return False
+
+    def _queue_sensor_preferences(self, *_):
+        self._preferences_timer.start(300)
+
+    def _save_sensor_preferences(self):
+        if not hasattr(self, "sensor_tree"):
+            return
+        header_state = bytes(self.sensor_tree.header().saveState().toBase64()).decode("ascii")
+        self._save_config({
+            "sensor_header_state": header_state,
+            "sensor_update_ms": self.sensor_update_ms,
+        })
+
+    def _set_update_interval(self, value):
+        self.sensor_update_ms = self._sanitize_update_interval(value)
+        if hasattr(self, "timer"):
+            self.timer.setInterval(self.sensor_update_ms)
+        self._queue_sensor_preferences()
+
     def load_co_config(self):
         try:
-            if os.path.exists(CONFIG_PATH):
-                with open(CONFIG_PATH, "r") as f:
-                    data = json.load(f)
-                offsets = data.get("co_offsets", [])
-                return (offsets + [0] * self.core_count)[:self.core_count]
+            offsets = self.config.get("co_offsets", [])
+            return (offsets + [0] * self.core_count)[:self.core_count]
         except Exception:
             pass
         return [0] * self.core_count
 
     def save_co_config(self):
-        try:
-            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-            with open(CONFIG_PATH, "w") as f:
-                json.dump({"co_offsets": self.current_co}, f)
-        except Exception:
-            pass
+        self._save_config({"co_offsets": self.current_co})
 
     def send_smu_cmd(self, msg_id, arg0=0):
         ok, why = smu_writes_supported()
