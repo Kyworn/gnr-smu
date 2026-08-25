@@ -1,11 +1,9 @@
 import sys
 import struct
-import collections
 import subprocess
 import json
 import os
 import glob
-import pyqtgraph as pg
 from PyQt6.QtWidgets import *
 from PyQt6.QtCore import *
 from PyQt6.QtGui import *
@@ -177,84 +175,7 @@ class CoreControlDialog(QDialog):
         layout.addWidget(btn_apply)
 
 
-# ================= COMPOSANTS UI =================
-class Gauge(QWidget):
-    def __init__(self, top_text, main_text, bottom_text, max_val, color):
-        super().__init__()
-        (
-            self.val,
-            self.max,
-            self.color,
-            self.top_text,
-            self.main_text,
-            self.bottom_text,
-        ) = 0, max_val, color, top_text, main_text, bottom_text
-        self.setFixedSize(130, 130)
-
-    def setValue(self, val, main_text=None, bottom_text=None):
-        self.val = val
-        if main_text:
-            self.main_text = main_text
-        if bottom_text:
-            self.bottom_text = bottom_text
-        self.update()
-
-    def paintEvent(self, e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(QPen(QColor(BORDER), 6))
-        p.drawArc(15, 15, 100, 100, -30 * 16, 240 * 16)
-        span_angle = (
-            int((min(self.val, self.max) / self.max) * 240 * 16) if self.max > 0 else 0
-        )
-        p.setPen(QPen(QColor(self.color), 6))
-        p.drawArc(15, 15, 100, 100, 210 * 16, -span_angle)
-        p.setFont(QFont("Segoe UI", 8))
-        p.setPen(QColor(TEXT_MAIN))
-        if self.top_text:
-            p.drawText(0, 35, 130, 20, Qt.AlignmentFlag.AlignCenter, self.top_text)
-        p.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        p.setPen(QColor(self.color))
-        p.drawText(0, 55, 130, 30, Qt.AlignmentFlag.AlignCenter, self.main_text)
-        p.setFont(QFont("Segoe UI", 8))
-        p.setPen(QColor(TEXT_MUTED))
-        p.drawText(0, 90, 130, 20, Qt.AlignmentFlag.AlignCenter, self.bottom_text)
-
-
-class MetricCard(QFrame):
-    def __init__(self, title, value="--", detail="", color=ACCENT_ORANGE):
-        super().__init__()
-        self.setObjectName("metricCard")
-        self.setMinimumHeight(112)
-        self.setStyleSheet(
-            f"QFrame#metricCard {{ background: {BG_PANEL}; border: 1px solid {BORDER}; "
-            "border-radius: 9px; } QLabel { border: none; background: transparent; }"
-        )
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 11, 14, 11)
-        layout.setSpacing(4)
-        self.title_lbl = QLabel(title)
-        self.title_lbl.setStyleSheet(
-            f"color: {TEXT_MUTED}; font-size: 11px; font-weight: 600;"
-        )
-        self.value_lbl = QLabel(value)
-        self.value_lbl.setStyleSheet(
-            f"color: {color}; font-size: 23px; font-weight: 700;"
-        )
-        self.detail_lbl = QLabel(detail)
-        self.detail_lbl.setWordWrap(True)
-        self.detail_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
-        layout.addWidget(self.title_lbl)
-        layout.addWidget(self.value_lbl)
-        layout.addWidget(self.detail_lbl)
-        layout.addStretch()
-
-    def set_value(self, value, detail=None):
-        self.value_lbl.setText(value)
-        if detail is not None:
-            self.detail_lbl.setText(detail)
-
-
+# ================= UI COMPONENTS =================
 class TelemetryPanel(QFrame):
     def __init__(self, title, subtitle=""):
         super().__init__()
@@ -286,77 +207,6 @@ class TelemetryPanel(QFrame):
         return label
 
 
-class CoreWidget(QFrame):
-    def __init__(self, core_id):
-        super().__init__()
-        self.setStyleSheet(
-            f"background-color: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 6px;"
-        )
-        self.setMinimumHeight(205)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(0)
-        title_row = QHBoxLayout()
-        title_row.setContentsMargins(0, 0, 0, 0)
-        title = QLabel(f"⛛ Core [{core_id}]")
-        title.setStyleSheet("color: #8b9bb4; border: none; font-size: 10px;")
-        self.co_lbl = QLabel("CO: 0")
-        self.co_lbl.setStyleSheet(
-            f"color: {ACCENT_PURPLE}; border: none; font-size: 9px; font-weight: bold;"
-        )
-        title_row.addWidget(title)
-        title_row.addWidget(self.co_lbl, alignment=Qt.AlignmentFlag.AlignRight)
-        layout.addLayout(title_row)
-        self.freq_lbl = QLabel("0.00 MHz")
-        self.freq_lbl.setStyleSheet(
-            f"color: {ACCENT_RED}; border: none; font-size: 18px; font-weight: bold; margin-top: 2px;"
-        )
-        layout.addWidget(self.freq_lbl)
-        self.max_lbl = QLabel("Max: 0.00 MHz")
-        self.max_lbl.setStyleSheet("color: #8b9bb4; border: none; font-size: 10px;")
-        layout.addWidget(self.max_lbl)
-        vt_layout = QHBoxLayout()
-        vt_layout.setContentsMargins(0, 5, 0, 5)
-        self.volt_lbl = QLabel("⚡ 0.000 V")
-        self.volt_lbl.setStyleSheet("color: #cbd5e1; border: none; font-size: 11px;")
-        self.temp_lbl = QLabel("🌡 0.00 C")
-        self.temp_lbl.setStyleSheet("color: #cbd5e1; border: none; font-size: 11px;")
-        vt_layout.addWidget(self.volt_lbl)
-        vt_layout.addWidget(self.temp_lbl)
-        layout.addLayout(vt_layout)
-        self.pwr_lbl = QLabel("0.00 W")
-        self.pwr_lbl.setStyleSheet("color: #fbbf24; border: none; font-size: 11px;")
-        layout.addWidget(self.pwr_lbl)
-        self.state_lbl = QLabel("FIT -- · C-state --")
-        self.state_lbl.setStyleSheet("color: #94a3b8; border: none; font-size: 9px;")
-        self.state_lbl.setWordWrap(True)
-        layout.addWidget(self.state_lbl)
-        load_lbl = QLabel("Load")
-        load_lbl.setStyleSheet("color: #64748b; border: none; font-size: 8px;")
-        layout.addWidget(load_lbl)
-        graph_layout = QHBoxLayout()
-        graph_layout.setContentsMargins(0, 0, 0, 0)
-        graph_layout.setSpacing(2)
-        zero_lbl = QLabel("0%")
-        zero_lbl.setStyleSheet("color: #64748b; border: none; font-size: 8px;")
-        zero_lbl.setAlignment(Qt.AlignmentFlag.AlignBottom)
-        graph_layout.addWidget(zero_lbl)
-        self.bar_chart = pg.PlotWidget()
-        self.bar_chart.setFixedHeight(30)
-        self.bar_chart.setBackground(None)
-        self.bar_chart.hideAxis("left")
-        self.bar_chart.hideAxis("bottom")
-        self.bar_chart.setStyleSheet("border: none;")
-        self.bar_chart.hideButtons()
-        self.bar_chart.setYRange(0, 100)
-        self.bg = pg.BarGraphItem(
-            x=list(range(20)), height=[0] * 20, width=0.8, brush=ACCENT_ORANGE, pen=None
-        )
-        self.bar_chart.addItem(self.bg)
-        graph_layout.addWidget(self.bar_chart, 1)
-        layout.addLayout(graph_layout)
-
-
 # ================= APPLICATION PRINCIPALE =================
 class GNRMaster(QMainWindow):
     def __init__(self):
@@ -377,14 +227,6 @@ class GNRMaster(QMainWindow):
         self.current_ppt, self.current_tdc, self.current_edc = limits or (None, None, None)
         self.current_co = self.load_co_config()
         self.core_cpu_ids = physical_core_cpu_ids()
-        self.power_history = collections.deque([0.0] * 100, maxlen=100)
-        self.temp_history = collections.deque([40.0] * 100, maxlen=100)
-        self.core_load_history = [
-            collections.deque([0.0] * 20, maxlen=20)
-            for _ in range(self.core_count)
-        ]
-        # d[270] hotspot is very spiky (single reads jump +14 °C at idle) — smooth it
-        self.hotspot_history = collections.deque([40.0] * 8, maxlen=8)
 
         self._build_interface()
 
@@ -470,163 +312,213 @@ class GNRMaster(QMainWindow):
 
     def _build_overview_page(self):
         page, layout = self._page(
-            "Dashboard", f"{self.profile.name if self.profile else 'Unsupported CPU'} · all live telemetry"
+            "Sensors Status", f"{self.profile.name if self.profile else 'Unsupported CPU'} · live telemetry"
         )
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        body = QWidget()
-        body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 5, 0)
-        body_layout.setSpacing(14)
+        toolbar = QHBoxLayout()
+        hint = QLabel("Values accumulate while this window stays open.  Experimental fields keep their PM-table index.")
+        hint.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
+        self.reset_stats_button = QPushButton("Reset min/max")
+        self.reset_stats_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reset_stats_button.setStyleSheet(self._control_button_style())
+        self.reset_stats_button.clicked.connect(self._reset_sensor_stats)
+        toolbar.addWidget(hint)
+        toolbar.addStretch()
+        toolbar.addWidget(self.reset_stats_button)
+        layout.addLayout(toolbar)
 
-        cards = QHBoxLayout()
-        cards.setSpacing(10)
-        self.ppt_card = MetricCard("PPT", color=ACCENT_RED)
-        self.temp_card = MetricCard("MAX CORE TEMPERATURE", color=ACCENT_ORANGE)
-        self.socket_card = MetricCard("SOCKET POWER", color=ACCENT_CYAN)
-        self.vcore_card = MetricCard("VCORE", color=ACCENT_PURPLE)
-        self.tdc_card = MetricCard("TDC", color=ACCENT_GREEN)
-        for card in (self.ppt_card, self.temp_card, self.socket_card,
-                     self.vcore_card, self.tdc_card):
-            cards.addWidget(card)
-        body_layout.addLayout(cards)
-
-        charts = QHBoxLayout()
-        charts.setSpacing(10)
-        power_panel, self.main_plot = self._plot_panel("PPT POWER HISTORY")
-        self.power_curve = self.main_plot.plot(
-            list(range(100)), list(self.power_history),
-            pen=pg.mkPen(ACCENT_RED, width=2), fillLevel=0,
-            brush=(239, 68, 68, 55),
+        self.sensor_tree = QTreeWidget()
+        self.sensor_tree.setHeaderLabels(["Sensor", "Current", "Minimum", "Maximum", "Average"])
+        self.sensor_tree.setRootIsDecorated(True)
+        self.sensor_tree.setAlternatingRowColors(True)
+        self.sensor_tree.setUniformRowHeights(True)
+        self.sensor_tree.setIndentation(16)
+        self.sensor_tree.setAnimated(False)
+        self.sensor_tree.setStyleSheet(
+            "QTreeWidget { background: #06080b; alternate-background-color: #171717; "
+            "color: #e5e7eb; border: 1px solid #303846; font-family: Consolas, monospace; "
+            "font-size: 12px; } "
+            "QTreeWidget::item { height: 22px; border-bottom: 1px solid #101216; } "
+            "QTreeWidget::item:selected { background: #172b47; color: #ffffff; } "
+            "QHeaderView::section { background: #151a22; color: #f8fafc; border: none; "
+            "border-right: 1px solid #303846; padding: 5px 8px; font-weight: 700; }"
         )
-        temp_panel, self.temp_plot = self._plot_panel("MAX CORE TEMPERATURE")
-        self.temp_curve = self.temp_plot.plot(
-            list(range(100)), list(self.temp_history),
-            pen=pg.mkPen(ACCENT_ORANGE, width=2), fillLevel=0,
-            brush=(249, 115, 22, 55),
-        )
-        charts.addWidget(power_panel)
-        charts.addWidget(temp_panel)
-        body_layout.addLayout(charts)
-
-        ccd_row = QHBoxLayout()
-        self.ccd_cards = []
-        ccd_count = max(1, (self.core_count + 7) // 8)
-        for ccd in range(ccd_count):
-            card = MetricCard(f"CCD {ccd}", "--", "Waiting for core telemetry", ACCENT_CYAN)
-            self.ccd_cards.append(card)
-            ccd_row.addWidget(card)
-        body_layout.addLayout(ccd_row)
-        body_layout.addWidget(self._section_heading(
-            "CORE TELEMETRY", "All physical cores, grouped by CCD"
-        ))
-        self._add_core_sections(body_layout)
-        body_layout.addWidget(self._section_heading(
-            "SYSTEM, RAILS & L3", "Limits, clocks, power domains and CCD/L3 candidates"
-        ))
-        self._add_system_panels(body_layout)
-        body_layout.addStretch()
-        scroll.setWidget(body)
-        layout.addWidget(scroll)
+        header = self.sensor_tree.header()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, 5):
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed)
+            self.sensor_tree.setColumnWidth(column, 142)
+        self.sensor_items = {}
+        self.sensor_units = {}
+        self.sensor_stats = {}
+        self._build_sensor_tree()
+        layout.addWidget(self.sensor_tree)
         return page
 
-    def _section_heading(self, title, subtitle):
-        heading = QWidget()
-        heading_layout = QVBoxLayout(heading)
-        heading_layout.setContentsMargins(0, 7, 0, 0)
-        heading_layout.setSpacing(2)
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet("font-size: 14px; font-weight: 750; color: #e2e8f0;")
-        subtitle_lbl = QLabel(subtitle)
-        subtitle_lbl.setStyleSheet(f"font-size: 10px; color: {TEXT_MUTED};")
-        heading_layout.addWidget(title_lbl)
-        heading_layout.addWidget(subtitle_lbl)
-        return heading
+    def _add_sensor_group(self, parent, label, expanded=True):
+        item = QTreeWidgetItem([label, "", "", "", ""])
+        item.setFirstColumnSpanned(True)
+        item.setExpanded(expanded)
+        item.setForeground(0, QColor("#f8fafc"))
+        font = item.font(0)
+        font.setBold(True)
+        item.setFont(0, font)
+        parent.addChild(item)
+        return item
 
-    def _plot_panel(self, title):
-        panel = TelemetryPanel(title)
-        plot = pg.PlotWidget()
-        plot.setBackground(None)
-        plot.hideButtons()
-        plot.enableAutoRange(axis="y", enable=True)
-        plot.setLimits(yMin=0)
-        plot.getAxis("left").setPen(TEXT_MUTED)
-        plot.getAxis("bottom").setPen(TEXT_MUTED)
-        plot.showGrid(x=False, y=True, alpha=0.25)
-        plot.setStyleSheet("border: none;")
-        panel.layout_box.addWidget(plot)
-        return panel, plot
+    def _add_sensor(self, parent, key, label, unit, tooltip=""):
+        item = QTreeWidgetItem([label, "--", "--", "--", "--"])
+        for column in range(1, 5):
+            item.setTextAlignment(
+                column,
+                int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter),
+            )
+        item.setBackground(1, QColor("#14243d"))
+        item.setForeground(1, QColor("#dbeafe"))
+        if tooltip:
+            item.setToolTip(0, tooltip)
+        parent.addChild(item)
+        self.sensor_items[key] = item
+        self.sensor_units[key] = unit
 
-    def _add_core_sections(self, layout):
-        self.core_widgets = []
+    def _build_sensor_tree(self):
+        cpu_name = self.profile.name if self.profile else "Unsupported CPU"
+        root = QTreeWidgetItem([f"CPU [#0]: {cpu_name} · Enhanced", "", "", "", ""])
+        root.setFirstColumnSpanned(True)
+        root.setExpanded(True)
+        root.setForeground(0, QColor("#ffffff"))
+        root_font = root.font(0)
+        root_font.setBold(True)
+        root.setFont(0, root_font)
+        self.sensor_tree.addTopLevelItem(root)
+
+        temperatures = self._add_sensor_group(root, "Temperatures")
+        self._add_sensor(temperatures, "tctl", "CPU (Tctl/Tdie)", "°C")
         for ccd in range(max(1, (self.core_count + 7) // 8)):
-            section = TelemetryPanel(f"CCD {ccd}", f"Physical cores {ccd * 8}–{min(self.core_count - 1, ccd * 8 + 7)}")
-            grid = QGridLayout()
-            grid.setSpacing(9)
-            start = ccd * 8
-            stop = min(self.core_count, start + 8)
-            for core in range(start, stop):
-                widget = CoreWidget(f"{ccd}-{core - start}")
-                self.core_widgets.append(widget)
-                local = core - start
-                grid.addWidget(widget, local // 4, local % 4)
-            section.layout_box.addLayout(grid)
-            layout.addWidget(section)
+            self._add_sensor(temperatures, f"tccd{ccd}", f"CPU CCD{ccd + 1} (k10temp)", "°C")
+        core_temps = self._add_sensor_group(temperatures, "Core Temperatures")
+        for core in range(self.core_count):
+            self._add_sensor(core_temps, f"core_temp_{core}",
+                             f"Core {core} (CCD{core // 8 + 1})", "°C")
 
-    def _add_system_panels(self, layout):
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(12)
+        l3 = self._add_sensor_group(root, "Experimental L3 / CCD candidates")
+        l3.setToolTip(0, "Low-confidence PM-table candidates; raw index remains visible.")
+        if self.profile and self.profile.l3_count:
+            for ccd in range(self.profile.l3_count):
+                self._add_sensor(l3, f"l3_temp_{ccd}",
+                                 f"L3 temperature? (CCD{ccd + 1}) · d[{self.profile.l3_temperature + ccd}]",
+                                 "°C", "Experimental PM-table candidate")
+                self._add_sensor(l3, f"l3_logic_{ccd}",
+                                 f"L3 logic power? (CCD{ccd + 1}) · d[{self.profile.l3_logic_power + ccd}]",
+                                 "W", "Experimental PM-table candidate")
+                self._add_sensor(l3, f"l3_vddm_{ccd}",
+                                 f"L3 VDDM power? (CCD{ccd + 1}) · d[{self.profile.l3_vddm_power + ccd}]",
+                                 "W", "Experimental PM-table candidate")
+        else:
+            l3.setText(0, "Experimental L3 / CCD candidates (not mapped for this profile)")
 
-        limits = TelemetryPanel("POWER LIMITS")
-        gauge_row = QHBoxLayout()
-        stock_tdc = self.profile.stock_tdc if self.profile else 160
-        stock_edc = self.profile.stock_edc if self.profile else 225
-        self.edc_gauge = Gauge("EDC Limit", "-- A", f"Stock: {stock_edc} A",
-                               stock_edc, ACCENT_ORANGE)
-        self.tdc_gauge = Gauge("TDC", "-- A", f"Limit: {stock_tdc} A",
-                               stock_tdc, ACCENT_RED)
-        gauge_row.addWidget(self.edc_gauge)
-        gauge_row.addWidget(self.tdc_gauge)
-        limits.layout_box.addLayout(gauge_row)
-        self.thermal_lbl = limits.add_row("Thermal: --")
+        limits = self._add_sensor_group(root, "Limits & current")
+        self._add_sensor(limits, "ppt", "CPU PPT", "W")
+        self._add_sensor(limits, "ppt_limit", "CPU PPT Limit", "W")
+        self._add_sensor(limits, "tdc", "CPU TDC", "A")
+        self._add_sensor(limits, "tdc_limit", "CPU TDC Limit", "A")
+        self._add_sensor(limits, "edc_limit", "CPU EDC Limit", "A")
+        self._add_sensor(limits, "thermal_limit", "Thermal Limit", "°C")
 
-        system = TelemetryPanel("CLOCKS & POWER DOMAINS")
-        self.clocks_lbl = system.add_row("Clocks: --")
-        self.domain_power_lbl = system.add_row("Power domains: --")
-        self.misc_lbl = system.add_row("Additional telemetry: --", ACCENT_CYAN)
+        power = self._add_sensor_group(root, "Power")
+        for key, label in (
+            ("socket_power", "CPU Socket Power"), ("cpu_power", "CPU Core Power"),
+            ("core_power", "Core Power Sum"), ("soc_power", "CPU SoC Power"),
+            ("vddio_power", "VDDIO MEM Power"), ("vdd18_power", "VDD18 Power"),
+        ):
+            self._add_sensor(power, key, label, "W")
+        core_power = self._add_sensor_group(power, "Core Powers", expanded=False)
+        for core in range(self.core_count):
+            self._add_sensor(core_power, f"core_power_{core}",
+                             f"Core {core} (CCD{core // 8 + 1})", "W")
 
-        rails = TelemetryPanel("VOLTAGE RAILS & FIT")
-        self.rail_primary_lbl = rails.add_row("Voltage rails: --")
-        self.rail_secondary_lbl = rails.add_row("CLDO rails: --")
-        self.fit_vid_lbl = rails.add_row("FIT / VID: --")
+        clocks = self._add_sensor_group(root, "Clocks")
+        for key, label in (("fclk", "Infinity Fabric Clock (FCLK)"),
+                           ("uclk", "Memory Controller Clock (UCLK)"),
+                           ("mclk", "Memory Clock (MCLK)")):
+            self._add_sensor(clocks, key, label, "MHz")
+        core_clocks = self._add_sensor_group(clocks, "Core Clocks", expanded=True)
+        for core in range(self.core_count):
+            self._add_sensor(core_clocks, f"core_clock_{core}",
+                             f"Core {core} (CCD{core // 8 + 1})", "MHz",
+                             "Live frequency from Linux cpufreq on the 9950X3D")
 
-        l3 = TelemetryPanel(
-            "EXPERIMENTAL L3 / CCD CANDIDATES",
-            "Low-confidence PM-table candidates. The d[index] is shown deliberately; "
-            "k10temp is an independent reference, not the same measurement.",
-        )
-        warning = QLabel("⚠  These fields are not yet validated as official L3 telemetry.")
-        warning.setWordWrap(True)
-        warning.setStyleSheet(
-            "color: #fbbf24; background: #3a2a16; border: 1px solid #854d0e; "
-            "border-radius: 5px; padding: 8px; font-size: 11px;"
-        )
-        l3_count = self.profile.l3_count if self.profile else 0
-        warning.setVisible(bool(l3_count))
-        l3.layout_box.addWidget(warning)
-        self.l3_labels = []
-        for ccd in range(max(1, l3_count)):
-            self.l3_labels.append(l3.add_row(f"CCD {ccd}: unavailable", ACCENT_CYAN))
-        if not l3_count:
-            self.l3_labels[0].setText("No L3 candidates mapped for this hardware profile")
+        voltages = self._add_sensor_group(root, "Voltages")
+        for key, label in (("vcore_peak", "Vcore Peak"), ("vcore_avg", "Vcore Average"),
+                           ("vsoc", "VDDCR_SOC"), ("vdd_misc", "VDD_MISC"),
+                           ("vddg_iod", "CLDO_VDDG_IOD"), ("vddg_ccd", "CLDO_VDDG_CCD"),
+                           ("vddp", "CLDO_VDDP"), ("vid", "CPU VID"),
+                           ("vid_limit", "VID Limit")):
+            self._add_sensor(voltages, key, label, "V")
+        core_voltages = self._add_sensor_group(voltages, "Core Voltages", expanded=False)
+        for core in range(self.core_count):
+            self._add_sensor(core_voltages, f"core_voltage_{core}",
+                             f"Core {core} (CCD{core // 8 + 1})", "V")
 
-        grid.addWidget(limits, 0, 0)
-        grid.addWidget(system, 0, 1)
-        grid.addWidget(rails, 1, 0)
-        grid.addWidget(l3, 1, 1)
-        layout.addLayout(grid)
+        residency = self._add_sensor_group(root, "Core residency & FIT", expanded=False)
+        for core in range(self.core_count):
+            ccd = core // 8 + 1
+            self._add_sensor(residency, f"core_fit_{core}", f"Core {core} FIT (CCD{ccd})", "")
+            self._add_sensor(residency, f"core_c0_{core}", f"Core {core} C0 residency (CCD{ccd})", "%")
+            self._add_sensor(residency, f"core_cc1_{core}", f"Core {core} CC1 residency (CCD{ccd})", "%")
+            self._add_sensor(residency, f"core_cc6_{core}", f"Core {core} CC6 residency (CCD{ccd})", "%")
+        co_config = self._add_sensor_group(root, "Configured Curve Optimizer", expanded=False)
+        for core in range(self.core_count):
+            self._add_sensor(co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int")
+        self.sensor_tree.expandItem(root)
+        self.sensor_tree.expandItem(temperatures)
+        self.sensor_tree.expandItem(core_temps)
+        self.sensor_tree.expandItem(l3)
+        self.sensor_tree.expandItem(limits)
+        self.sensor_tree.expandItem(power)
+        self.sensor_tree.expandItem(clocks)
+        self.sensor_tree.expandItem(core_clocks)
+
+    def _format_sensor_value(self, value, unit):
+        if value is None:
+            return "--"
+        if unit == "MHz":
+            return f"{value:,.0f} MHz"
+        if unit in ("°C", "%"):
+            return f"{value:.1f} {unit}"
+        if unit in ("W", "A", "V"):
+            return f"{value:.3f} {unit}"
+        if unit == "int":
+            return f"{value:.0f}"
+        return f"{value:.2f}"
+
+    def _set_sensor(self, key, value):
+        item = self.sensor_items.get(key)
+        if item is None:
+            return
+        unit = self.sensor_units[key]
+        item.setText(1, self._format_sensor_value(value, unit))
+        if value is None:
+            return
+        stat = self.sensor_stats.get(key)
+        if stat is None:
+            stat = [value, value, value, 1]
+            self.sensor_stats[key] = stat
+        else:
+            stat[0] = min(stat[0], value)
+            stat[1] = max(stat[1], value)
+            stat[2] += value
+            stat[3] += 1
+        item.setText(2, self._format_sensor_value(stat[0], unit))
+        item.setText(3, self._format_sensor_value(stat[1], unit))
+        item.setText(4, self._format_sensor_value(stat[2] / stat[3], unit))
+
+    def _reset_sensor_stats(self):
+        self.sensor_stats.clear()
+        for item in self.sensor_items.values():
+            for column in range(2, 5):
+                item.setText(column, "--")
+        self.log_msg("Sensor minimum, maximum and average reset.", "STATUS", ACCENT_GREEN)
 
     def _build_logs_page(self):
         page, layout = self._page(
@@ -855,88 +747,59 @@ class GNRMaster(QMainWindow):
         except (OSError, ValueError):
             return None
 
-    def _update_status_panel(self, d):
-        self.clocks_lbl.setText(
-            f"Clocks  FCLK {d[71]:.0f} · UCLK {d[75]:.0f} · MCLK {d[79]:.0f} MHz"
-        )
-        if self.profile.pm_version == 0x620205:
-            self.thermal_lbl.setText(
-                f"Thermal  Tctl {d[11]:.1f} °C · Limit {d[10]:.0f} °C"
-            )
-            self.domain_power_lbl.setText(
-                f"Power  CPU {d[20]:.1f} · SoC {d[21]:.1f} · "
-                f"VDDIO {d[22]:.1f} · VDD18 {d[23]:.1f} W"
-            )
-            self.rail_primary_lbl.setText(
-                f"Rails  VSOC {d[83]:.3f} · VDD_MISC {d[58]:.3f} V"
-            )
-            self.rail_secondary_lbl.setText(
-                f"CLDO  VDDG IOD {d[259]:.3f} · CCD {d[261]:.3f} · "
-                f"VDDP {d[269]:.3f} V"
-            )
-            self.fit_vid_lbl.setText(
-                f"FIT / VID  FIT {d[16]:.1f} · VID {d[19]:.3f} / "
-                f"{d[18]:.3f} V max"
-            )
-            self.misc_lbl.setText(f"Socket power  {d[26]:.1f} W")
-        else:
-            self.hotspot_history.append(d[270])
-            hotspot = sum(self.hotspot_history) / len(self.hotspot_history)
-            self.thermal_lbl.setText(
-                f"Thermal  Tctl {d[11]:.1f} °C · Hotspot {hotspot:.1f} °C · "
-                f"Limit {d[10]:.0f} °C"
-            )
-            self.domain_power_lbl.setText(
-                f"Power  Package {d[20]:.1f} · SoC {d[21]:.1f} · "
-                f"CPU telem {d[22]:.1f} · VDDIO {d[23]:.1f} W"
-            )
-            self.rail_primary_lbl.setText(
-                f"Rails  VSOC {d[83]:.3f} · VDDIO {d[58]:.3f} · "
-                f"SoC VID {d[271]:.3f} V"
-            )
-            self.rail_secondary_lbl.setText(
-                f"SoC rails  {d[259]:.3f} / {d[261]:.3f} · "
-                f"CPU VID {d[269]:.3f} V"
-            )
-            self.fit_vid_lbl.setText(
-                f"Vcore  Peak {d[18]:.3f} · Avg {d[19]:.3f} V · "
-                f"Max boost {d[272]:.3f} GHz"
-            )
-            self.misc_lbl.setText(
-                f"iGPU  {d[107]:.1f} W · {d[108]:.0f} MHz · {d[109]:.0f}%"
-            )
+    def _update_sensor_tree(self, d):
+        vcores = [d[self.profile.core_voltage + i] for i in range(self.core_count)]
+        self._set_sensor("tctl", d[11])
+        self._set_sensor("ppt", d[3])
+        self._set_sensor("ppt_limit", d[2])
+        self._set_sensor("tdc", d[9])
+        self._set_sensor("tdc_limit", d[8])
+        self._set_sensor("edc_limit", d[63])
+        self._set_sensor("thermal_limit", d[10])
+        self._set_sensor("socket_power", d[26] if self.profile.pm_version == 0x620205 else d[20])
+        self._set_sensor("cpu_power", d[20])
+        self._set_sensor("core_power", sum(d[self.profile.core_power + i]
+                                            for i in range(self.core_count)))
+        self._set_sensor("soc_power", d[21])
+        self._set_sensor("vddio_power", d[22])
+        self._set_sensor("vdd18_power", d[23])
+        self._set_sensor("fclk", d[71])
+        self._set_sensor("uclk", d[75])
+        self._set_sensor("mclk", d[79])
+        self._set_sensor("vcore_peak", max(vcores))
+        self._set_sensor("vcore_avg", sum(vcores) / self.core_count)
+        self._set_sensor("vsoc", d[83])
+        self._set_sensor("vdd_misc", d[58])
+        self._set_sensor("vddg_iod", d[259])
+        self._set_sensor("vddg_ccd", d[261])
+        self._set_sensor("vddp", d[269])
+        self._set_sensor("vid", d[19])
+        self._set_sensor("vid_limit", d[18])
 
-    def _update_l3_panel(self, d):
-        if not self.profile.l3_count:
-            return
-        for ccd in range(self.profile.l3_count):
-            logic_index = self.profile.l3_logic_power + ccd
-            vddm_index = self.profile.l3_vddm_power + ccd
-            temp_index = self.profile.l3_temperature + ccd
-            sensor = read_hwmon_temperature(f"Tccd{ccd + 1}")
-            sensor_text = f"{sensor:.1f} °C" if sensor is not None else "unavailable"
-            self.l3_labels[ccd].setText(
-                f"CCD {ccd}\n"
-                f"L3 temperature?  {d[temp_index]:.2f} °C  · d[{temp_index}]\n"
-                f"L3 logic power?  {d[logic_index]:.3f} W  · d[{logic_index}]\n"
-                f"L3 VDDM power?  {d[vddm_index]:.3f} W  · d[{vddm_index}]\n"
-                f"Independent k10temp Tccd{ccd + 1}:  {sensor_text}"
-            )
+        ccd_count = max(1, (self.core_count + 7) // 8)
+        for ccd in range(ccd_count):
+            self._set_sensor(f"tccd{ccd}", read_hwmon_temperature(f"Tccd{ccd + 1}"))
+        if self.profile.l3_count:
+            for ccd in range(self.profile.l3_count):
+                self._set_sensor(f"l3_temp_{ccd}", d[self.profile.l3_temperature + ccd])
+                self._set_sensor(f"l3_logic_{ccd}", d[self.profile.l3_logic_power + ccd])
+                self._set_sensor(f"l3_vddm_{ccd}", d[self.profile.l3_vddm_power + ccd])
 
-    def _update_ccd_cards(self, d, frequencies, loads):
-        for ccd, card in enumerate(self.ccd_cards):
-            start = ccd * 8
-            stop = min(self.core_count, start + 8)
-            temps = [d[self.profile.core_temp + i] for i in range(start, stop)]
-            powers = [d[self.profile.core_power + i] for i in range(start, stop)]
-            valid_freqs = [value for value in frequencies[start:stop]
-                           if value is not None]
-            avg_freq = sum(valid_freqs) / len(valid_freqs) if valid_freqs else 0
-            avg_load = sum(loads[start:stop]) / max(1, stop - start)
-            card.set_value(
-                f"{max(temps):.1f} °C · {avg_freq:.0f} MHz",
-                f"Σ core power {sum(powers):.2f} W  ·  average C0/load {avg_load:.0f}%",
-            )
+        for core in range(self.core_count):
+            freq = self._core_frequency_mhz(d, core)
+            self._set_sensor(f"core_temp_{core}", d[self.profile.core_temp + core])
+            self._set_sensor(f"core_clock_{core}", freq)
+            self._set_sensor(f"core_power_{core}", d[self.profile.core_power + core])
+            self._set_sensor(f"core_voltage_{core}", d[self.profile.core_voltage + core])
+            self._set_sensor(f"core_fit_{core}", d[self.profile.core_fit + core])
+            self._set_sensor(f"core_cc6_{core}", d[self.profile.core_cc6 + core])
+            self._set_sensor(f"co_{core}", self.current_co[core])
+            if self.profile.core_c0 is not None:
+                self._set_sensor(f"core_c0_{core}", d[self.profile.core_c0 + core])
+                self._set_sensor(f"core_cc1_{core}", d[self.profile.core_cc1 + core])
+            else:
+                self._set_sensor(f"core_c0_{core}", None)
+                self._set_sensor(f"core_cc1_{core}", None)
 
     def update_data(self):
         ok, why = hardware_supported()
@@ -960,106 +823,7 @@ class GNRMaster(QMainWindow):
                     self.current_ppt = d[2]
                     self.current_edc = d[63]
                     self.current_tdc = d[8]
-                    pkg_pwr = d[3]  # PPT value: the figure the PPT limit applies to
-
-                    ppt_percent = (pkg_pwr / self.current_ppt * 100
-                                   if self.current_ppt > 0 else 0)
-                    self.ppt_card.set_value(
-                        f"{pkg_pwr:.1f} / {self.current_ppt:.0f} W",
-                        f"{ppt_percent:.0f}% of configured PPT",
-                    )
-                    self.edc_gauge.setValue(
-                        self.current_edc,
-                        main_text=f"{self.current_edc:.0f} A",
-                        bottom_text=f"Stock: {self.profile.stock_edc} A",
-                    )
-                    self.tdc_gauge.setValue(
-                        d[9],
-                        main_text=f"{d[9]:.1f} A",
-                        bottom_text=f"Limit: {self.current_tdc:.0f} A",
-                    )
-                    self.power_history.append(pkg_pwr)
-                    self.power_curve.setData(list(range(100)), list(self.power_history))
-
-                    vcores = [d[self.profile.core_voltage + i]
-                              for i in range(self.core_count)]
-                    vcore_peak = max(vcores)
-                    vcore_avg = sum(vcores) / self.core_count
-                    self.vcore_card.set_value(
-                        f"{vcore_peak:.3f} V", f"Peak · average {vcore_avg:.3f} V"
-                    )
-
-                    self._update_status_panel(d)
-                    self._update_l3_panel(d)
-                    # Max core temp history
-                    max_temp = max(d[self.profile.core_temp + i]
-                                   for i in range(self.core_count))
-                    self.temp_card.set_value(
-                        f"{max_temp:.1f} °C", f"Tctl {d[11]:.1f} °C · limit {d[10]:.0f} °C"
-                    )
-                    socket_power = d[26] if self.profile.pm_version == 0x620205 else d[20]
-                    self.socket_card.set_value(
-                        f"{socket_power:.1f} W", "PM-table package/socket reading"
-                    )
-                    tdc_percent = (d[9] / self.current_tdc * 100
-                                   if self.current_tdc > 0 else 0)
-                    self.tdc_card.set_value(
-                        f"{d[9]:.1f} / {self.current_tdc:.0f} A",
-                        f"{tdc_percent:.0f}% of configured TDC",
-                    )
-                    self.temp_history.append(max_temp)
-                    self.temp_curve.setData(list(range(100)), list(self.temp_history))
-
-                    frequencies = []
-                    loads = []
-                    for i in range(self.core_count):
-                        volt = d[self.profile.core_voltage + i]
-                        temp = d[self.profile.core_temp + i]
-                        freq = self._core_frequency_mhz(d, i)
-                        max_freq = d[self.profile.core_boost_limit + i] * 1000
-                        power = d[self.profile.core_power + i]
-                        fit = d[self.profile.core_fit + i]
-                        cc6 = d[self.profile.core_cc6 + i]
-                        if self.profile.core_c0 is not None:
-                            c0 = d[self.profile.core_c0 + i]
-                            cc1 = d[self.profile.core_cc1 + i]
-                            load = max(0, min(100, c0))
-                            activity = d[self.profile.core_activity + i]
-                            states = (f"FIT {fit:.1f} · Act? {activity:.2f}\n"
-                                      f"C0 {c0:.0f}% · C1 {cc1:.0f}% · C6 {cc6:.0f}%")
-                        else:
-                            load = max(0, min(100, 100 - cc6))
-                            activity = d[self.profile.core_activity + i]
-                            states = (f"FIT {fit:.1f} · Light? {activity:.2f} · "
-                                      f"C6 {cc6:.0f}%")
-                        frequencies.append(freq)
-                        loads.append(load)
-                        cw = self.core_widgets[i]
-                        cw.freq_lbl.setText(
-                            f"{freq:.0f} MHz" if freq is not None else "-- MHz"
-                        )
-                        if self.profile.core_frequency is None:
-                            cw.freq_lbl.setToolTip("Live frequency from Linux cpufreq")
-                        limit_label = ("Limit" if self.profile.boost_limit_confident
-                                       else "Boost?")
-                        cw.max_lbl.setText(f"{limit_label}: {max_freq:.0f} MHz")
-                        if not self.profile.boost_limit_confident:
-                            cw.max_lbl.setToolTip(
-                                "PM-table boost-limit candidate; not independently confirmed"
-                            )
-                        cw.volt_lbl.setText(f"⚡ {volt:.3f} V")
-                        cw.temp_lbl.setText(f"🌡 {temp:.1f} °C")
-                        cw.co_lbl.setText(f"CO: {self.current_co[i]}")
-                        cw.pwr_lbl.setText(f"Power: {power:.2f} W")
-                        cw.state_lbl.setText(states)
-                        cw.state_lbl.setToolTip(
-                            "Act?/Light? marks a lower-confidence PM-table metric"
-                        )
-
-                        self.core_load_history[i].append(load)
-                        cw.bg.setOpts(height=list(self.core_load_history[i]))
-
-                    self._update_ccd_cards(d, frequencies, loads)
+                    self._update_sensor_tree(d)
 
         except FileNotFoundError:
             pass

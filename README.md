@@ -130,7 +130,7 @@ Two measurement lessons from building it are worth stealing if you write your ow
 All of them need the `ryzen_smu` driver loaded, and root.
 
 ```bash
-sudo python3 tools/gui/gnr_master.py      # one-page PyQt6 dashboard: cores, rails, L3 candidates
+sudo python3 tools/gui/gnr_master.py      # HWiNFO-style table: current/min/max/avg, cores, rails, L3
 sudo python3 tools/gnr_master.py          # menu-driven CLI for limits and Curve Optimizer
 sudo python3 tools/export_telemetry.py    # 5 JSON snapshots
 sudo python3 tools/export_telemetry.py --csv
