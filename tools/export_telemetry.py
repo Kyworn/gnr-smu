@@ -5,6 +5,7 @@ Usage:
   python3 export_telemetry.py              # 5 JSON snapshots -> gnr_telemetry_dump.json
   python3 export_telemetry.py --csv        # named CSV snapshot -> gnr_telemetry.csv
   python3 export_telemetry.py --live N     # CSV live logging every N seconds (Ctrl+C to stop)
+  python3 export_telemetry.py --temps      # print one per-core temperature snapshot
 """
 import struct
 import json
@@ -15,7 +16,7 @@ import argparse
 import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hwgate import hardware_supported  # noqa: E402
+from hwgate import get_hardware_profile  # noqa: E402
 
 PM_TABLE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table"
 VERSION_PATH  = "/sys/kernel/ryzen_smu_drv/pm_table_version"
@@ -23,8 +24,9 @@ VERSION_PATH  = "/sys/kernel/ryzen_smu_drv/pm_table_version"
 JSON_OUTPUT   = "gnr_telemetry_dump.json"
 CSV_OUTPUT    = "gnr_telemetry.csv"
 
-# Key named fields: (column_name, float_index, unit)
-NAMED_FIELDS = [
+# Key named fields: (column_name, float_index, unit). Fields before the per-core
+# struct are shared by the two validated table versions.
+COMMON_FIELDS = [
     ("timestamp",        None,  "s"),
     # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected 2026-07-30.
     # d[8] is TDC (not EDC) and d[10] is the thermal limit in °C (not TDC in A).
@@ -51,17 +53,22 @@ NAMED_FIELDS = [
     ("slow_temp_1",      299,   "C"),   # was "l3_temp_1"
     ("pkg_energy",       212,   "J"),
 ]
-# Per-core fields (8 cores)
-for _c in range(8):
-    NAMED_FIELDS += [
-        (f"c{_c}_voltage",    309 + _c, "V"),
-        (f"c{_c}_temp",       317 + _c, "C"),
-        (f"c{_c}_freq",       325 + _c, "GHz"),
-        (f"c{_c}_power",      333 + _c, "W"),
-        (f"c{_c}_c0_residency", 357 + _c, "%"),
-        (f"c{_c}_c6_residency", 349 + _c, "%"),
-        (f"c{_c}_boost_limit",  373 + _c, "GHz"),
-    ]
+
+
+def named_fields(profile):
+    fields = list(COMMON_FIELDS)
+    for core in range(profile.cores):
+        fields += [
+            (f"c{core}_voltage", profile.core_voltage + core, "V"),
+            (f"c{core}_temp", profile.core_temp + core, "C"),
+            (f"c{core}_freq", profile.core_freq + core, "GHz"),
+            (f"c{core}_power", profile.core_power + core, "W"),
+            (f"c{core}_light_cstate_metric",
+             profile.core_light_cstate + core, "metric"),
+            (f"c{core}_c6_residency", profile.core_c6 + core, "%"),
+            (f"c{core}_boost_limit", profile.core_boost_limit + core, "GHz"),
+        ]
+    return fields
 
 
 def get_pm_version():
@@ -79,53 +86,72 @@ def require_supported_hardware():
     still has a `Package_Power_W` column, it still holds a plausible number, and
     nothing downstream can tell it came from the wrong offset.
     """
-    ok, why = hardware_supported()
-    if not ok:
+    profile, why = get_hardware_profile()
+    if profile is None:
         sys.exit(f"refusing to export: {why}\n"
                  f"see tools/hwgate.py — the field names would be wrong, not missing.")
     print(f"hardware check: {why}")
+    return profile
 
 
-def get_floats():
+def get_floats(profile):
     with open(PM_TABLE_PATH, "rb") as f:
-        data = f.read(1828)
-    if len(data) != 1828:
+        data = f.read(profile.table_size)
+    if len(data) != profile.table_size:
         raise ValueError(f"Unexpected table size: {len(data)} bytes")
-    return list(struct.unpack("<457f", data))
+    return list(struct.unpack(f"<{profile.float_count}f", data))
 
 
-def floats_to_row(d, ts):
+def floats_to_row(d, ts, profile, fields=None):
     row = {}
-    vcores = [d[309 + i] for i in range(8)]
-    for name, idx, _ in NAMED_FIELDS:
+    fields = fields or named_fields(profile)
+    vcores = [d[profile.core_voltage + i] for i in range(profile.cores)]
+    for name, idx, _ in fields:
         if name == "timestamp":
             row[name] = f"{ts:.3f}"
         elif name == "vcore_peak":
             row[name] = f"{max(vcores):.4f}"
         elif name == "vcore_avg":
-            row[name] = f"{sum(vcores)/8:.4f}"
+            row[name] = f"{sum(vcores)/profile.cores:.4f}"
         else:
             row[name] = f"{d[idx]:.4f}"
     return row
 
 
+def csv_output_mode(fieldnames, live_interval):
+    """Return ``(mode, write_header)`` without appending to an incompatible CSV."""
+    append = (live_interval is not None and os.path.exists(CSV_OUTPUT)
+              and os.path.getsize(CSV_OUTPUT) > 0)
+    if not append:
+        return "w", True
+
+    with open(CSV_OUTPUT, newline="") as f:
+        existing_header = next(csv.reader(f), [])
+    if existing_header != fieldnames:
+        sys.exit(
+            f"refusing to append to {CSV_OUTPUT}: its columns do not match the "
+            "current hardware profile; move or remove the existing file first"
+        )
+    return "a", False
+
+
 def cmd_json():
-    require_supported_hardware()
+    profile = require_supported_hardware()
     ver = get_pm_version()
     snapshots = []
     print("Capturing 5 snapshots (10 seconds)...")
     for i in range(5):
         print(f"  Snapshot {i+1}/5...")
-        snapshots.append(get_floats())
+        snapshots.append(get_floats(profile))
         if i < 4:
             time.sleep(2)
     export_data = {
         "metadata": {
             "version": hex(ver),
-            "table_size": 1828,
-            "float_count": 457,
+            "table_size": profile.table_size,
+            "float_count": profile.float_count,
             "notes": "Generated by GNR-SMU export tool",
-            "processor": "Granite Ridge (Zen 5) — Ryzen 7 9800X3D",
+            "processor": f"Granite Ridge (Zen 5) — {profile.name}",
         },
         "snapshots": snapshots,
     }
@@ -135,46 +161,56 @@ def cmd_json():
 
 
 def cmd_csv(live_interval=None):
-    require_supported_hardware()
-    ver = get_pm_version()
-
-    fieldnames = [name for name, _, _ in NAMED_FIELDS]
-    write_header = not os.path.exists(CSV_OUTPUT) or live_interval is None
-
-    mode = "a" if (live_interval and os.path.exists(CSV_OUTPUT)) else "w"
+    profile = require_supported_hardware()
+    fields = named_fields(profile)
+    fieldnames = [name for name, _, _ in fields]
+    mode, write_header = csv_output_mode(fieldnames, live_interval)
     with open(CSV_OUTPUT, mode, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
 
         if live_interval is None:
-            d = get_floats()
-            writer.writerow(floats_to_row(d, time.time()))
+            d = get_floats(profile)
+            writer.writerow(floats_to_row(d, time.time(), profile, fields))
             print(f"✅ Snapshot -> {CSV_OUTPUT}")
         else:
             print(f"Live logging every {live_interval}s -> {CSV_OUTPUT}  (Ctrl+C to stop)")
             n = 0
             try:
                 while True:
-                    d = get_floats()
-                    writer.writerow(floats_to_row(d, time.time()))
+                    d = get_floats(profile)
+                    writer.writerow(floats_to_row(d, time.time(), profile, fields))
                     f.flush()
                     n += 1
                     pkg = d[20]
-                    max_temp = max(d[317 + i] for i in range(8))
+                    max_temp = max(d[profile.core_temp + i]
+                                   for i in range(profile.cores))
                     print(f"\r  [{n}] Pkg: {pkg:.1f}W  MaxTemp: {max_temp:.1f}°C", end="", flush=True)
                     time.sleep(live_interval)
             except KeyboardInterrupt:
                 print(f"\n✅ Stopped after {n} samples.")
 
 
+def cmd_temps():
+    profile = require_supported_hardware()
+    d = get_floats(profile)
+    print(f"Per-core temperatures — {profile.name}")
+    for core in range(profile.cores):
+        print(f"Core {core:2}: {d[profile.core_temp + core]:5.1f} °C")
+
+
 def main():
     parser = argparse.ArgumentParser(description="GNR-SMU Telemetry Exporter")
     parser.add_argument("--csv", action="store_true", help="Export named CSV snapshot")
     parser.add_argument("--live", type=float, metavar="N", help="Live CSV logging every N seconds")
+    parser.add_argument("--temps", action="store_true",
+                        help="Print one per-core temperature snapshot")
     args = parser.parse_args()
 
-    if args.live is not None:
+    if args.temps:
+        cmd_temps()
+    elif args.live is not None:
         cmd_csv(live_interval=args.live)
     elif args.csv:
         cmd_csv()

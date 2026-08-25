@@ -1,85 +1,198 @@
 #!/usr/bin/env python3
-"""Refuse to interpret the PM table on hardware it was never measured on.
+"""Hardware profiles and safety gates for Granite Ridge PM-table tools.
 
-Every offset in PM_TABLE_MAP.md comes from exactly one machine: a Ryzen 7 9800X3D,
-8 cores / 1 CCD, PM table v0x620105. None of it is validated anywhere else. Two ways
-that goes wrong on someone else's box:
-
-  - A different table version moves every offset. The bytes still parse as 457 floats,
-    so the tools show plausible numbers that are simply the wrong fields. A silently
-    wrong reading is worse than an error, because nothing looks broken.
-  - A different core count changes the per-core array widths. d[317-324] is 8 wide
-    here; on a 16-core part everything from there on shifts.
-
-Reading the wrong field displays a wrong number. *Writing* a limit derived from a
-wrong field pushes it into the SMU. That already happened once on validated hardware:
-the thermal limit (88 °C) was read as TDC and pre-filled the write dialog as 88 A.
-
-Shared by the GUI and the telemetry exporter so the rule cannot drift between them.
-
-Self-check: python3 tools/hwgate.py
+Telemetry layouts are keyed by PM-table version, byte size and physical core count.
+SMU writes have a separate, stricter gate: validating read-only telemetry on a CPU
+does not establish that mailbox commands or Curve Optimizer IDs are safe on it.
 """
 
+from dataclasses import dataclass
 import struct
 
 VERSION_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_version"
-EXPECTED_PM_VERSION = 0x620105
-EXPECTED_CORES = 8
+SIZE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_size"
+
+
+@dataclass(frozen=True)
+class HardwareProfile:
+    name: str
+    cpu_model: str
+    pm_version: int
+    table_size: int
+    cores: int
+    core_voltage: int
+    core_temp: int
+    core_freq: int
+    core_power: int
+    core_c6: int
+    core_light_cstate: int
+    core_boost_limit: int
+    ppt_msg: int
+    tdc_msg: int
+    edc_msg: int
+    stock_ppt: int
+    stock_tdc: int
+    stock_edc: int
+    co_mode: str
+    co_msg: int = 0
+    allow_smu_writes: bool = False
+
+    @property
+    def float_count(self):
+        return self.table_size // 4
+
+
+PROFILES = {
+    (0x620105, 1828, 8): HardwareProfile(
+        "AMD Ryzen 7 9800X3D", "AMD Ryzen 7 9800X3D", 0x620105, 1828, 8,
+        core_voltage=309, core_temp=317, core_freq=325, core_power=333,
+        core_c6=349, core_light_cstate=357, core_boost_limit=373,
+        ppt_msg=0x3E, tdc_msg=0x3D, edc_msg=0x3C,
+        stock_ppt=162, stock_tdc=120, stock_edc=180,
+        co_mode="legacy_per_message",
+        allow_smu_writes=True,
+    ),
+    (0x620205, 2452, 16): HardwareProfile(
+        "AMD Ryzen 9 9950X3D", "AMD Ryzen 9 9950X3D", 0x620205, 2452, 16,
+        core_voltage=317, core_temp=333, core_freq=349, core_power=365,
+        core_c6=397, core_light_cstate=413, core_boost_limit=445,
+        # ZenStates-Core's Granite Ridge profile inherits the Zen 4 MP1 command
+        # table: Fast/PPT=0x3E, TDC=0x3C, EDC=0x3D, per-core DLDO margin=0x35.
+        ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
+        stock_ppt=200, stock_tdc=160, stock_edc=225,
+        co_mode="packed_core_mask", co_msg=0x35,
+        allow_smu_writes=True,
+    ),
+}
 
 _cached = None
 
 
 def _core_count(cpuinfo="/proc/cpuinfo"):
-    """Physical cores, from the distinct 'core id' values. 0 if unreadable — an
-    unknown core count is not treated as a mismatch, since the version check is the
-    load-bearing one and /proc/cpuinfo formats vary."""
+    """Return physical cores from distinct (package, core-id) pairs."""
     try:
+        pairs = set()
+        package = "0"
+        core = None
         with open(cpuinfo) as f:
-            return len({l.split(":", 1)[1].strip()
-                        for l in f if l.startswith("core id")})
+            for line in f:
+                if not line.strip():
+                    if core is not None:
+                        pairs.add((package, core))
+                    package, core = "0", None
+                elif line.startswith("physical id"):
+                    package = line.split(":", 1)[1].strip()
+                elif line.startswith("core id"):
+                    core = line.split(":", 1)[1].strip()
+        if core is not None:
+            pairs.add((package, core))
+        return len(pairs)
     except Exception:
         return 0
 
 
-def hardware_supported():
-    """(ok, reason). Cached: the answer cannot change while the process runs."""
+def _read_uint(path):
+    with open(path, "rb") as f:
+        data = f.read(8)
+    if len(data) < 4:
+        raise ValueError(f"short read ({len(data)} bytes)")
+    return struct.unpack("<I", data[:4])[0]
+
+
+def _cpu_model(cpuinfo="/proc/cpuinfo"):
+    try:
+        with open(cpuinfo) as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def get_hardware_profile():
+    """Return ``(profile_or_none, reason)``; cached for the process lifetime."""
     global _cached
     if _cached is not None:
         return _cached
-
     try:
-        with open(VERSION_PATH, "rb") as f:
-            ver = struct.unpack("<I", f.read(4))[0]
+        version = _read_uint(VERSION_PATH)
+        table_size = _read_uint(SIZE_PATH)
     except Exception as e:
-        _cached = (False, f"cannot read pm_table_version ({e}) — is ryzen_smu loaded?")
-        return _cached
-
-    if ver != EXPECTED_PM_VERSION:
-        _cached = (False, f"PM table {hex(ver)}, but every offset in this tool was "
-                          f"measured on {hex(EXPECTED_PM_VERSION)}")
+        _cached = (None, f"cannot read PM-table metadata ({e}) — is ryzen_smu loaded?")
         return _cached
 
     cores = _core_count()
-    if cores and cores != EXPECTED_CORES:
-        _cached = (False, f"{cores} physical cores — the per-core offsets are mapped "
-                          f"{EXPECTED_CORES} wide and shift on any other count")
+    profile = PROFILES.get((version, table_size, cores))
+    cpu_model = _cpu_model()
+    if profile is not None and profile.cpu_model not in cpu_model:
+        profile = None
+    if profile is None:
+        _cached = (
+            None,
+            f"unsupported PM table {hex(version)}, {table_size} bytes, "
+            f"{cores or 'unknown'} physical cores, CPU {cpu_model or 'unknown'}",
+        )
         return _cached
-
-    _cached = (True, f"PM table {hex(ver)}, {cores or 'unknown'} cores")
+    _cached = (
+        profile,
+        f"{profile.name}: PM table {hex(version)}, {table_size} bytes, {cores} cores",
+    )
     return _cached
 
 
+def hardware_supported():
+    """Compatibility API used by telemetry callers: ``(ok, reason)``."""
+    profile, why = get_hardware_profile()
+    return profile is not None, why
+
+
+def smu_writes_supported():
+    """Keep telemetry validation and mailbox-command validation separate."""
+    profile, why = get_hardware_profile()
+    if profile is None:
+        return False, why
+    if not profile.allow_smu_writes:
+        return False, f"SMU writes are not validated on {profile.name}"
+    return True, why
+
+
+def smu_message_supported(profile, msg_id):
+    """Only allow message IDs explicitly present in the selected profile."""
+    allowed = {profile.ppt_msg, profile.tdc_msg, profile.edc_msg}
+    if profile.co_mode == "legacy_per_message":
+        allowed.update(range(0x50, 0x50 + profile.cores))
+    elif profile.co_mode == "packed_core_mask":
+        allowed.add(profile.co_msg)
+    return msg_id in allowed
+
+
+def curve_optimizer_command(profile, core, margin):
+    """Return the profile-specific ``(MP1 message, arg0)`` for one physical core."""
+    if not 0 <= core < profile.cores:
+        raise ValueError(f"core {core} outside 0..{profile.cores - 1}")
+    if not -50 <= margin <= 20:
+        raise ValueError("Curve Optimizer margin must be between -50 and 20")
+    if profile.co_mode == "legacy_per_message":
+        return 0x50 + core, margin & 0xFFFFFFFF
+    if profile.co_mode == "packed_core_mask":
+        # Zen 3+: [31:28] CCD, [23:20] core-within-CCD, [15:0] signed margin.
+        core_mask = (core // 8) << 28 | (core % 8) << 20
+        return profile.co_msg, core_mask | (margin & 0xFFFF)
+    raise ValueError(f"unsupported CO command mode: {profile.co_mode}")
+
+
+def map_labels_supported():
+    """The full PM_TABLE_MAP.md is currently the 9800X3D/457-float map."""
+    profile, _ = get_hardware_profile()
+    return profile is not None and profile.pm_version == 0x620105
+
+
 if __name__ == "__main__":
-    import tempfile
-
-    # The parser is the only part worth checking without the hardware present.
-    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
-        f.write("processor\t: 0\ncore id\t\t: 0\nprocessor\t: 1\ncore id\t\t: 0\n"
-                "processor\t: 2\ncore id\t\t: 1\n")
-        two_cores = f.name
-    assert _core_count(two_cores) == 2, "two distinct core ids, four processor lines"
-    assert _core_count("/nonexistent") == 0, "unreadable cpuinfo must not claim a count"
-
-    ok, why = hardware_supported()
-    print(f"{'SUPPORTED' if ok else 'REFUSED'}: {why}")
-    print(f"this machine reports {_core_count()} physical cores")
+    profile, why = get_hardware_profile()
+    print(f"{'SUPPORTED' if profile else 'REFUSED'}: {why}")
+    if profile:
+        print(f"per-core temperatures: d[{profile.core_temp}.."
+              f"{profile.core_temp + profile.cores - 1}]")
+        writes, write_why = smu_writes_supported()
+        print(f"SMU writes: {'enabled' if writes else 'blocked'} ({write_why})")

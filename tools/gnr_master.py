@@ -5,18 +5,13 @@ import struct
 import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hwgate import hardware_supported
+from hwgate import (curve_optimizer_command, get_hardware_profile,
+                    smu_message_supported, smu_writes_supported)
 
 CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
     "gnr_master.json",
 )
-
-# Stock 9800X3D, read back from the PM table limits d[2]/d[8]/d[63] and matching AMD
-# spec. The reset option used to send 85 A TDC and 120 A EDC, which is not stock: it
-# clamped both below what the part ships with, so "reset" quietly throttled the CPU.
-STOCK_PPT_W, STOCK_TDC_A, STOCK_EDC_A = 162, 120, 180
-CORES = 8
 
 # The GUI blocks these outright; the CLI never sends them, but it applies the same
 # rule so the two cannot drift. 0x10 and 0x03-0x0D are the dangerous MP1 IDs.
@@ -24,9 +19,13 @@ BLOCKED = {0x10} | set(range(0x03, 0x0E))
 
 
 def apply_cmd(msg_id, arg0):
-    ok, why = hardware_supported()
+    ok, why = smu_writes_supported()
     if not ok:
         print(f"[BLOCKED] SMU writes disabled: {why}")
+        return False
+    profile, _ = get_hardware_profile()
+    if not smu_message_supported(profile, msg_id):
+        print(f"[BLOCKED] MSG 0x{msg_id:02x} is not in the {profile.name} allowlist")
         return False
     if msg_id in BLOCKED:
         print(f"[BLOCKED] guardrail: MSG 0x{msg_id:02x}")
@@ -42,16 +41,26 @@ def apply_cmd(msg_id, arg0):
         
         with open(smu_cmd, "rb") as f:
             rsp = struct.unpack("<I", f.read(4))[0]
-            
-        print(f"[OK] Sent MSG=0x{msg_id:02x} ARG={arg0} => RSP: {'OK' if rsp == 1 else rsp}")
-        return True
+
+        rsp_name = {
+            1: "OK",
+            0xFD: "REJECTED",
+            0xFE: "UNKNOWN_CMD",
+            0xFF: "FAILED",
+        }.get(rsp, f"0x{rsp:02X}")
+        success = rsp == 1
+        level = "OK" if success else "ERROR"
+        print(f"[{level}] Sent MSG=0x{msg_id:02x} ARG={arg0} => RSP: {rsp_name}")
+        return success
     except Exception as e:
         print(f"[ERROR] Driver write failed: {e}")
         return False
 
 def save_co_config(co_val):
     try:
-        data = {"co_offsets": [co_val] * CORES}
+        profile, _ = get_hardware_profile()
+        cores = profile.cores if profile else 8
+        data = {"co_offsets": [co_val] * cores}
         with open(CONFIG_PATH, "w") as f:
             json.dump(data, f)
     except OSError as e:
@@ -77,6 +86,13 @@ def ask_limit(name, unit, max_val):
 
 
 def main():
+    profile, _ = get_hardware_profile()
+    cores = profile.cores if profile else 8
+    writes_ok, writes_why = smu_writes_supported()
+    if not writes_ok:
+        print(f"[BLOCKED] This CLI only performs SMU writes: {writes_why}")
+        print("Use export_telemetry.py --temps for read-only per-core temperatures.")
+        return
     print("--- GNR Master Control ---")
     print("1. Set PPT Limit (Watts)")
     print("2. Set Custom TDC (Amps)")
@@ -90,31 +106,40 @@ def main():
     if choice == '1':
         w = ask_limit("PPT", "Watts", 250)
         if w is not None:
-            apply_cmd(0x3E, int(w * 1000))
+            apply_cmd(profile.ppt_msg, int(w * 1000))
     elif choice == '2':
         a = ask_limit("TDC", "Amps", 200)
-        # 0x3D is the real TDC limit on Granite Ridge
         if a is not None:
-            apply_cmd(0x3D, int(a * 1000))
+            apply_cmd(profile.tdc_msg, int(a * 1000))
     elif choice == '3':
         a = ask_limit("EDC", "Amps", 250)
-        # 0x3C is the real EDC limit on Granite Ridge
         if a is not None:
-            apply_cmd(0x3C, int(a * 1000))
+            apply_cmd(profile.edc_msg, int(a * 1000))
     elif choice == '4':
-        val = 0xFFFFFFE2 # -30 as 32-bit unsigned
-        for i in range(CORES):
-            apply_cmd(0x50 + i, val)
-        save_co_config(-30)
-        print("CO -30 saved locally for the GUI!")
+        applied = True
+        for i in range(cores):
+            msg_id, arg0 = curve_optimizer_command(profile, i, -30)
+            if not apply_cmd(msg_id, arg0):
+                applied = False
+                break
+        if applied:
+            save_co_config(-30)
+            print("CO -30 applied and saved locally for the GUI!")
     elif choice == '5':
-        # Reset to stock
-        apply_cmd(0x3E, STOCK_PPT_W * 1000)
-        apply_cmd(0x3D, STOCK_TDC_A * 1000)
-        apply_cmd(0x3C, STOCK_EDC_A * 1000)
-        save_co_config(0)
-        for i in range(CORES): apply_cmd(0x50 + i, 0)
-        print("Reset successful.")
+        applied = apply_cmd(profile.ppt_msg, profile.stock_ppt * 1000)
+        if applied:
+            applied = apply_cmd(profile.tdc_msg, profile.stock_tdc * 1000)
+        if applied:
+            applied = apply_cmd(profile.edc_msg, profile.stock_edc * 1000)
+        if applied:
+            for i in range(cores):
+                msg_id, arg0 = curve_optimizer_command(profile, i, 0)
+                if not apply_cmd(msg_id, arg0):
+                    applied = False
+                    break
+        if applied:
+            save_co_config(0)
+            print("Reset successful.")
     
 if __name__ == "__main__":
     main()

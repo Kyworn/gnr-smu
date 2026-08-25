@@ -2,18 +2,22 @@
 
 Telemetry map and SMU control tools for AMD Granite Ridge (Zen 5) under Linux.
 
+Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
+The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
+command allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
+
 ![GNR-SMU Dashboard](assets/screenshot.png)
 
-The `ryzen_smu` driver exposes a 1828-byte PM table at
-`/sys/kernel/ryzen_smu_drv/pm_table` — 457 little-endian float32 values with no
-published layout. This repo is the layout, worked out by measurement, plus the tools
-that read and write it.
+The `ryzen_smu` driver exposes a model-specific PM table at
+`/sys/kernel/ryzen_smu_drv/pm_table`, with no published layout. The 9800X3D table is
+1828 bytes / 457 float32 values; the 9950X3D table is 2452 bytes / 613 values. This
+repo contains the measured layouts and tools that select the correct profile.
 
 ## Wanted: a dump from any other Granite Ridge part
 
 This is the one thing that would move the project forward, and it takes about ten
-seconds. Any Zen 5 desktop chip that is not a 9800X3D — 9600X, 9700X, 9900X, 9950X,
-9950X3D, anything:
+seconds. Any still-unmapped Zen 5 desktop chip — 9600X, 9700X, 9900X, 9950X, or a
+different PM-table version:
 
 ```bash
 sudo python3 tools/dump_table_full.py > my_dump.txt
@@ -23,10 +27,9 @@ Open an issue with that file and your exact CPU model. The dump tool works on
 unvalidated hardware on purpose: it drops the labels and prints raw values, which is
 exactly what is needed to compare layouts.
 
-Why it matters: every offset here comes from one machine, so nothing distinguishes
-"this is where AMD puts Tctl" from "this is where Tctl landed on my 9800X3D". A second
-part settles that. A 12- or 16-core part also settles where the per-core arrays end,
-which is currently inferred from a single 8-wide block.
+Why it matters: the complete labelled map still comes from the 9800X3D. The 9950X3D
+establishes how the 16-wide per-core arrays shift, but most of its remaining 613-float
+table has not yet been identified.
 
 The other open questions need a different lever rather than more data. Thirteen fields
 have a narrowed domain but no identification, because under load every axis rises at
@@ -38,23 +41,24 @@ the search is written up as a negative result.
 
 ## Read this before running it on your machine
 
-**Every offset here was measured on exactly one machine:** a Ryzen 7 9800X3D,
-8 cores / 1 CCD, PM table version `0x620105`. Nothing is validated anywhere else.
+**The complete map was measured on exactly one machine:** a Ryzen 7 9800X3D,
+8 cores / 1 CCD, PM table version `0x620105`. The 9950X3D has a separate 613-float
+profile, and its 16-lane per-core temperature block was independently validated on
+both CCDs. It does not claim that the complete 9800X3D map applies.
 
 That matters more than it sounds, because the failure mode is silent. A different
-table version moves every offset, but the bytes still parse as 457 floats — so the
-GUI shows plausible watts and degrees that are simply the wrong fields. A different
-core count changes the per-core array widths; `d[317-324]` is 8 wide here, and on a
-16-core part everything after it shifts.
+table version moves offsets, but the bytes still parse as floats — so a GUI can show
+plausible watts and degrees that are simply the wrong fields. A different core count
+also changes the width and starting index of later per-core arrays.
 
 So the tools check first ([`tools/hwgate.py`](tools/hwgate.py)) and refuse rather than
 guess:
 
 | | Validated hardware | Anything else |
 |---|---|---|
-| Telemetry display | full | stops, with the reason |
-| CSV/JSON export | full | exits, does not write a file |
-| SMU writes (limits, Curve Optimizer) | allowed | blocked |
+| Telemetry display | profile-specific | stops, with the reason |
+| CSV/JSON export | profile-specific | exits, does not write a file |
+| SMU writes (limits, Curve Optimizer) | profile allowlist only | blocked |
 
 If you hit the gate, send a dump rather than loosening it — the offsets would be wrong,
 not missing.
@@ -123,15 +127,16 @@ sudo python3 tools/gnr_master.py          # menu-driven CLI for limits and Curve
 sudo python3 tools/export_telemetry.py    # 5 JSON snapshots
 sudo python3 tools/export_telemetry.py --csv
 sudo python3 tools/export_telemetry.py --live 2   # append a CSV row every 2 s
-sudo python3 tools/dump_table_full.py      # all 457 floats, labelled from the map
+sudo python3 tools/export_telemetry.py --temps    # all per-core temperatures once
+sudo python3 tools/dump_table_full.py      # complete table; labels where mapped
 ```
 
-SMU control uses MP1 mailbox **message IDs** (not table offsets): `0x3E` PPT,
-`0x3D` TDC, `0x3C` EDC, `0x50`-`0x57` per-core Curve Optimizer as a signed 32-bit
-value. On Zen 5 the TDC and EDC IDs are the reverse of what Zen 4 documentation
-implies, which is why they are commented at every call site. Curve Optimizer is
-write-only — the SMU will not read the offsets back, so the tools cache them locally
-in `$XDG_CONFIG_HOME/gnr_master.json` to keep the display honest.
+SMU control uses profile-specific MP1 mailbox **message IDs** (not table offsets).
+On the 9800X3D the empirically mapped commands remain `0x3E` PPT, `0x3D` TDC,
+`0x3C` EDC and `0x50`-`0x57` per-core CO. The 9950X3D profile uses the maintained
+ZenStates-Core mapping: `0x3E` PPT, `0x3C` TDC, `0x3D` EDC and `0x35` per-core CO
+with CCD/core selection encoded in the argument. Curve Optimizer is write-only, so
+the tools cache applied offsets in `$XDG_CONFIG_HOME/gnr_master.json`.
 
 `research/` holds the measurement scripts, one per question asked: `audit_map.py`
 (the map's regression gate), `recheck_zone0.py` / `recheck_sweep.py` / `recheck_edc.py`
@@ -159,10 +164,10 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   pre-filled the write dialog as 88 A. Hence the hardware gate.
 - **Both front-ends block message IDs `0x03`-`0x0D` and `0x10`** outright, and that
   should stay. `0x58`-`0x5D` freeze MP1 on this part; do not probe them.
-- Stock limits for the 9800X3D are 162 W PPT / 120 A TDC / 180 A EDC. The reset paths
-  send exactly those.
+- Stock limits are 162 W PPT / 120 A TDC / 180 A EDC on the 9800X3D and 200 W /
+  160 A / 225 A on the 9950X3D. The reset paths select the matching profile.
 - 3D V-Cache runs under a tighter thermal ceiling than the rest of the die. The
-  thermal limit in the table reads 88 °C.
+  table reports 88 °C on the tested 9800X3D and 95 °C on the tested 9950X3D.
 - SMU settings are volatile — a reboot reverts everything to BIOS constraints. That is
   also your recovery path.
 
