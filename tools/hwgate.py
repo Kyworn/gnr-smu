@@ -47,7 +47,10 @@ PROFILES = {
         "AMD Ryzen 7 9800X3D", "AMD Ryzen 7 9800X3D", 0x620105, 1828, 8,
         core_voltage=309, core_temp=317, core_freq=325, core_power=333,
         core_c6=349, core_light_cstate=357, core_boost_limit=373,
-        ppt_msg=0x3E, tdc_msg=0x3D, edc_msg=0x3C,
+        # Measured by read-back, not assumed: research/probe_tdc_edc.py writes a
+        # distinctive value and reports which PM field moved. 0x3C moves d[8] (TDC),
+        # 0x3D moves d[63] (EDC). The reverse order was this repo's for months.
+        ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=162, stock_tdc=120, stock_edc=180,
         co_mode="legacy_per_message",
         allow_smu_writes=True,
@@ -249,6 +252,13 @@ if __name__ == "__main__":
     # An allowlist and a never-send list are different things and both have to hold:
     # smu_message_supported() says what a profile is known to accept, msg_id_blocked()
     # says what nothing may send on any part.
+    # The power-limit mapping is the same on every Granite Ridge part, and getting it
+    # backwards writes the TDC box into EDC. It was wrong here once; assert it rather
+    # than trust the next person editing the table above.
+    for key, prof in PROFILES.items():
+        assert (prof.ppt_msg, prof.tdc_msg, prof.edc_msg) == (0x3E, 0x3C, 0x3D), \
+            f"{prof.name}: power-limit message IDs must be PPT 0x3E, TDC 0x3C, EDC 0x3D"
+
     for blocked_id in (0x03, 0x0D, 0x10, 0x58, 0x5D):
         assert msg_id_blocked(blocked_id)[0], f"0x{blocked_id:02x} must be blocked"
     for allowed_id in (0x02, 0x0E, 0x3C, 0x3D, 0x3E, 0x50, 0x57, 0x5E):
