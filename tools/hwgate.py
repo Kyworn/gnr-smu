@@ -34,6 +34,20 @@ class HardwareProfile:
     stock_tdc: int
     stock_edc: int
     co_mode: str
+    # Ceilings for the three power limits, in the same units as stock_*. These are the
+    # maxima the front-ends already offered, not a validated safe envelope: above
+    # stock is PBO territory and nothing here has measured where it stops being safe.
+    # They exist so the *argument* is bounded somewhere other than a spinbox.
+    # Raw SMN mailbox addresses, for the research tools that drive the mailbox through
+    # setpci instead of the driver. Measured on the 9800X3D; a profile that leaves them
+    # empty makes those tools refuse rather than poke the same registers on a part
+    # where they may be something else entirely.
+    #   (MSG, RSP, ARG0)
+    mp1_smn: tuple = ()
+    rsmu_smn: tuple = ()
+    max_ppt: int = 0
+    max_tdc: int = 0
+    max_edc: int = 0
     co_msg: int = 0
     allow_smu_writes: bool = False
 
@@ -52,6 +66,9 @@ PROFILES = {
         # 0x3D moves d[63] (EDC). The reverse order was this repo's for months.
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=162, stock_tdc=120, stock_edc=180,
+        mp1_smn=(0x3B10530, 0x3B1057C, 0x3B109C4),
+        rsmu_smn=(0x3B10524, 0x3B10570, 0x3B10A40),
+        max_ppt=250, max_tdc=200, max_edc=250,
         co_mode="legacy_per_message",
         allow_smu_writes=True,
     ),
@@ -63,6 +80,7 @@ PROFILES = {
         # table: Fast/PPT=0x3E, TDC=0x3C, EDC=0x3D, per-core DLDO margin=0x35.
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=200, stock_tdc=160, stock_edc=225,
+        max_ppt=300, max_tdc=250, max_edc=300,
         co_mode="packed_core_mask", co_msg=0x35,
         allow_smu_writes=True,
     ),
@@ -79,8 +97,14 @@ PROFILES = {
 # The freeze range is the one docs/FINDINGS.md actually tested. This list said
 # 0x58-0x5D for a while, which is narrower than the measurement for no stated reason
 # and left 0x5E-0x6F reachable from the research tools.
-BLOCKED_MP1_IDS = {0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x70))
-BLOCKED_MSG_IDS = BLOCKED_MP1_IDS  # old name, kept for callers
+BLOCKED_MP1_IDS = frozenset({0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x70)))
+
+# RSMU is the other mailbox, and "not on the MP1 list" is not the same statement as
+# "safe on RSMU". Only the two table commands are established here — 0x04 returns the
+# PM table's DRAM address and 0x05 triggers the transfer — so RSMU runs as an
+# allowlist rather than a blocklist. docs/FINDINGS.md records the driver itself
+# rejecting the 0x58-0x6F range on this endpoint.
+RSMU_ALLOWED_IDS = frozenset({0x04, 0x05})
 
 MAILBOXES = ("mp1", "rsmu")
 
@@ -99,8 +123,11 @@ def msg_id_blocked(msg_id, mailbox="mp1"):
         # the caller most likely also resolved it to some default endpoint.
         return True, (f"unknown mailbox {mailbox!r} — refusing rather than guessing "
                       f"which never-send list applies (known: {', '.join(MAILBOXES)})")
-    if mailbox != "mp1":
-        return False, None
+    if mailbox == "rsmu":
+        if msg_id in RSMU_ALLOWED_IDS:
+            return False, None
+        return True, (f"RSMU 0x{msg_id:02x} is not one of the established table "
+                      f"commands ({', '.join(f'0x{i:02x}' for i in sorted(RSMU_ALLOWED_IDS))})")
     if 0x58 <= msg_id <= 0x6F:
         return True, (f"MSG 0x{msg_id:02x} freezes MP1 on Granite Ridge — no response, "
                       "recovery needs a reboot")
@@ -211,6 +238,36 @@ def smu_message_supported(profile, msg_id):
     return msg_id in allowed
 
 
+def payload_allowed(profile, msg_id, arg0):
+    """(ok, reason) for the *argument* of a power-limit write.
+
+    Nothing checked this before: both front-ends bounded the number in their own
+    spinbox and then handed an unchecked arg0 to the sender, so any direct caller —
+    or a GUI field converted through ``arg0 & 0xFFFFFFFF`` — reached the mailbox with
+    whatever it liked. BASELINE_SNAPSHOT.md records ``ppt 0`` locking the CPU to
+    606 MHz, which is the concrete reason a floor exists at all.
+
+    Message IDs that are not power limits pass through: Curve Optimizer arguments are
+    built and range-checked by curve_optimizer_command().
+    """
+    bounds = {profile.ppt_msg: ("PPT", "W", profile.stock_ppt, profile.max_ppt),
+              profile.tdc_msg: ("TDC", "A", profile.stock_tdc, profile.max_tdc),
+              profile.edc_msg: ("EDC", "A", profile.stock_edc, profile.max_edc)}
+    if msg_id not in bounds:
+        return True, None
+    name, unit, stock, ceiling = bounds[msg_id]
+    if not isinstance(arg0, int) or arg0 < 0:
+        return False, f"{name} argument {arg0!r} is not a non-negative integer"
+    value = arg0 / 1000.0
+    if value <= 0:
+        return False, (f"{name} 0 {unit} is a total throttle, not a limit — the CPU "
+                       "locks to its minimum multiplier until reboot")
+    if value > ceiling:
+        return False, (f"{name} {value:g} {unit} is above the {ceiling} {unit} ceiling "
+                       f"for {profile.name} (stock is {stock} {unit})")
+    return True, None
+
+
 def curve_optimizer_command(profile, core, margin):
     """Return the profile-specific ``(MP1 message, arg0)`` for one physical core."""
     if not 0 <= core < profile.cores:
@@ -288,10 +345,22 @@ if __name__ == "__main__":
         assert not msg_id_blocked(allowed_id)[0], f"0x{allowed_id:02x} must be allowed"
 
     # A different mailbox is a different ID namespace: RSMU 0x04/0x05 read the PM
-    # table and must not inherit the MP1 list.
-    for rsmu_id in (0x04, 0x05, 0x3C, 0x5D):
+    # table and must not inherit the MP1 list. But RSMU is an allowlist, so an ID that
+    # merely escapes the MP1 list does not get through either.
+    for rsmu_id in (0x04, 0x05):
         assert not msg_id_blocked(rsmu_id, mailbox="rsmu")[0], \
-            f"RSMU 0x{rsmu_id:02x} must not be judged against the MP1 never-send list"
+            f"RSMU 0x{rsmu_id:02x} is an established table command"
+    for rsmu_id in (0x3C, 0x5D, 0x00, 0x70):
+        assert msg_id_blocked(rsmu_id, mailbox="rsmu")[0], \
+            f"RSMU 0x{rsmu_id:02x} is not established and must not pass"
+
+    probe_profile = PROFILES[(0x620105, 1828, 8)]
+    assert payload_allowed(probe_profile, 0x3E, 162_000)[0], "stock PPT must pass"
+    assert payload_allowed(probe_profile, 0x3E, 250_000)[0], "the ceiling itself passes"
+    assert not payload_allowed(probe_profile, 0x3E, 0)[0], "PPT 0 W locks the CPU"
+    assert not payload_allowed(probe_profile, 0x3E, 250_001)[0], "above the ceiling"
+    assert not payload_allowed(probe_profile, 0x3C, -1)[0], "negative is not a limit"
+    assert payload_allowed(probe_profile, 0x50, 0)[0], "CO is bounded elsewhere"
 
     # An unrecognised mailbox must fail closed, not fall through to "allowed".
     for junk in ("MP1", "rsmu ", "", None):
@@ -301,7 +370,8 @@ if __name__ == "__main__":
     profile, why = get_hardware_profile()
     print(f"{'SUPPORTED' if profile else 'REFUSED'}: {why}")
     print(f"this machine reports {_core_count()} physical cores")
-    print(f"never-send list: {len(BLOCKED_MP1_IDS)} MP1 message IDs")
+    print(f"never-send list: {len(BLOCKED_MP1_IDS)} MP1 message IDs; "
+          f"RSMU allowlist: {len(RSMU_ALLOWED_IDS)}")
     if profile:
         print(f"per-core temperatures: d[{profile.core_temp}.."
               f"{profile.core_temp + profile.cores - 1}]")

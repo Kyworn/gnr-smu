@@ -12,10 +12,11 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools"))
-from hwgate import get_hardware_profile, msg_id_blocked, smu_writes_supported  # noqa: E402
+from hwgate import (get_hardware_profile, msg_id_blocked, payload_allowed,
+                    smu_writes_supported)  # noqa: E402
 
 
-def guard(msg_id):
+def guard(msg_id, arg0=None):
     """Refuse the send, or return None. Both checks matter here and neither existed
     before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
@@ -28,14 +29,31 @@ def guard(msg_id):
     blocked, reason = msg_id_blocked(msg_id, "mp1")
     if blocked:
         sys.exit(f"REFUSED: {reason}")
+    if arg0 is not None:
+        p, _ = get_hardware_profile()
+        ok, why = payload_allowed(p, msg_id, arg0)
+        if not ok:
+            sys.exit(f"REFUSED: {why}")
 
 
 
 PCI_DEV  = "00:00.0"
-MSG_ADDR = 0x3B10530
-RSP_ADDR = 0x3B1057C
-ARG0_ADDR = 0x3B109C4
-ARG1_ADDR = 0x3B109C8
+
+
+def mailbox_addrs():
+    """(MSG, RSP, ARG0, ARG1) for the MP1 mailbox on the running part.
+
+    These used to be module constants measured on the 9800X3D, guarded by a check
+    that accepts every supported part. They live on the profile now, so a CPU whose
+    addresses were never measured stops here instead of writing to whatever those
+    registers happen to be on it. ARG1 is ARG0 + 4 on every part seen so far.
+    """
+    profile, why = get_hardware_profile()
+    if profile is None or not profile.mp1_smn:
+        sys.exit(f"REFUSED: no measured raw MP1 mailbox address for this part "
+                 f"({why}). This tool writes SMN registers directly.")
+    msg, rsp, arg0 = profile.mp1_smn
+    return msg, rsp, arg0, arg0 + 4
 
 # Stock limits and the PPT/TDC/EDC message IDs both live on the profile in
 # tools/hwgate.py, and are deliberately not copied here. This file used to carry its
@@ -68,7 +86,8 @@ def smn_write(addr: int, value: int):
 
 
 def smu_send(msg_id: int, arg0: int = 0, timeout: float = 1.0) -> tuple[int, int, int]:
-    guard(msg_id)
+    guard(msg_id, arg0)
+    MSG_ADDR, RSP_ADDR, ARG0_ADDR, ARG1_ADDR = mailbox_addrs()
     smn_write(RSP_ADDR, 0)
     smn_write(ARG0_ADDR, arg0)
     smn_write(MSG_ADDR, msg_id)

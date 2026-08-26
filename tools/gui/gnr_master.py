@@ -18,7 +18,8 @@ CONFIG_PATH = os.path.join(
 # offsets and refuses unknown CPU/table combinations.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hwgate import (curve_optimizer_command, get_hardware_profile,
-                    hardware_supported, msg_id_blocked, smu_message_supported,
+                    hardware_supported, msg_id_blocked, payload_allowed,
+                    smu_message_supported,
                     smu_writes_supported)  # noqa: E402
 
 # The MP1 message IDs now come from the hardware profile, per part. This file used to
@@ -274,7 +275,11 @@ class GNRMaster(QMainWindow):
             f"background-color: {BG_MAIN}; color: {TEXT_MAIN}; font-family: 'Segoe UI';"
         )
 
-        self.current_ppt, self.current_tdc, self.current_edc = self._read_pm_limits()
+        # None on unvalidated hardware: no profile means no defensible default, and
+        # the write dialog must not be pre-filled with another part's numbers. The
+        # guardrails already block writes there, so this only affects what is shown.
+        limits = self._read_pm_limits()
+        self.current_ppt, self.current_tdc, self.current_edc = limits or (None, None, None)
         self.current_co = self.load_co_config()
         self.power_history = collections.deque([0.0] * 100, maxlen=100)
         self.temp_history = collections.deque([40.0] * 100, maxlen=100)
@@ -607,6 +612,14 @@ class GNRMaster(QMainWindow):
         if blocked:
             self.log_msg(f"GUARDRAIL: {reason}", "ERROR", ACCENT_RED)
             return False
+        # The ID being allowed says nothing about the number riding with it, and the
+        # arg0 & 0xFFFFFFFF below would happily turn a negative spinbox value into
+        # four billion milliamps. The spinbox bounds are a convenience; this is the
+        # check.
+        ok, why = payload_allowed(self.profile, msg_id, arg0)
+        if not ok:
+            self.log_msg(f"GUARDRAIL: {why}", "ERROR", ACCENT_RED)
+            return False
 
         SMU_ARGS = "/sys/kernel/ryzen_smu_drv/smu_args"
         SMU_CMD = "/sys/kernel/ryzen_smu_drv/mp1_smu_cmd"
@@ -654,6 +667,13 @@ class GNRMaster(QMainWindow):
 
     def open_power_control(self):
         if not self._smu_controls_available():
+            return
+        if None in (self.current_ppt, self.current_tdc, self.current_edc):
+            # _smu_controls_available() already covers this, but the dialog does
+            # arithmetic on these and a None here would be a traceback in a window
+            # that is about to write to the SMU.
+            self.log_msg("Current limits unknown — refusing to open the write dialog "
+                         "with no defensible defaults.", "ERROR", ACCENT_RED)
             return
         dlg = PowerControlDialog(
             self.current_ppt, self.current_tdc, self.current_edc, self
@@ -704,10 +724,14 @@ class GNRMaster(QMainWindow):
                 )
 
     def _read_pm_limits(self):
-        # Stock 9800X3D spec is the fallback: on unvalidated hardware these offsets
-        # hold something else, and this feeds the write dialog's defaults.
-        if not hardware_supported()[0]:
-            return 162.0, 120.0, 180.0
+        # Fallback comes from the profile, not from a copy of the 9800X3D's numbers:
+        # this feeds the write dialog's defaults, and handing a 9950X3D 162/120/180
+        # because its table read failed is the kind of wrong default that gets
+        # written back. Unvalidated hardware has no profile and so gets nothing.
+        if not hardware_supported()[0] or self.profile is None:
+            return None
+        stock = (float(self.profile.stock_ppt), float(self.profile.stock_tdc),
+                 float(self.profile.stock_edc))
         try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
                 d = struct.unpack(f"<{self.profile.float_count}f",
@@ -718,7 +742,7 @@ class GNRMaster(QMainWindow):
             # with 120 A (the real TDC limit).
             return d[2], d[8], d[63]
         except Exception:
-            return 162.0, 120.0, 180.0
+            return stock
 
     def update_data(self):
         ok, why = hardware_supported()

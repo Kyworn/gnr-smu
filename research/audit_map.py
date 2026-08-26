@@ -253,7 +253,12 @@ for a, b in [(20, 51), (21, 56), (58, 59), (43, 44), (27, 274)]:
             break
 # Documented as near-copies, NOT identical: assert they really are distinct, so the
 # doc does not silently drift back to claiming a perfect mirror.
-for a, b in [(3, 26), (3, 277), (9, 50)]:
+# d[268] is in here because it was labelled "EDC Limit (mirror)" while reading 120
+# against an EDC of 180, and no check covered it. It is 0x42f00000 where d[8] is
+# 0x42f00001, so the pair is a near-copy and must stay one: if these ever go
+# bit-identical the map's "static 120.0 parameter, relationship to TDC unverified"
+# is understating what is known.
+for a, b in [(3, 26), (3, 277), (9, 50), (8, 268)]:
     if all(v[a] == v[b] for v in idle_raws):
         warn("MIRROR", f"d[{a}] == d[{b}] in every snapshot — documented as a "
                        "near-copy with a non-zero delta")

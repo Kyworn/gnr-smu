@@ -6,7 +6,8 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hwgate import (curve_optimizer_command, get_hardware_profile,
-                    msg_id_blocked, smu_message_supported, smu_writes_supported)
+                    msg_id_blocked, payload_allowed, smu_message_supported,
+                    smu_writes_supported)
 
 CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
@@ -38,6 +39,12 @@ def apply_cmd(msg_id, arg0):
     blocked, reason = msg_id_blocked(msg_id)
     if blocked:
         print(f"[BLOCKED] guardrail: {reason}")
+        return False
+    # The ID being allowed says nothing about the number riding with it. This is the
+    # only place the argument is checked; the menu's own bounds are a convenience.
+    ok, why = payload_allowed(profile, msg_id, arg0)
+    if not ok:
+        print(f"[BLOCKED] {why}")
         return False
 
     smu_args = "/sys/kernel/ryzen_smu_drv/smu_args"

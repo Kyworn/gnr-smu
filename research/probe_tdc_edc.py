@@ -34,6 +34,7 @@ whole method is void — better to find that out before drawing a conclusion fro
     sudo python3 research/probe_tdc_edc.py
 """
 
+import math
 import struct
 import sys
 import time
@@ -85,13 +86,18 @@ def send(msg_id, arg0):
 
 
 def probe(msg_id, arg0, label, unit, baseline):
+    """Returns (after, field, exact).
+
+    `field` is the single limit this ID was shown to drive, or None. `exact` says
+    whether it also read back as the requested value. The two are deliberately
+    separate: a clamp or a quantisation can move exactly one field without it landing
+    on the number we asked for, which is still an identification — while a write that
+    the SMU refused, or one that moved two fields at once, is not.
+    """
     rsp = send(msg_id, arg0)
     after = read_limits()
     moved = [name for name, b, a in zip(("PPT", "TDC", "EDC"), baseline, after)
              if abs(a - b) > 0.5]
-    # "It moved" is weaker than "it became what we asked for": a clamp, a concurrent
-    # writer or a slow update can all move a field without the write having landed.
-    # Only a field that reads back as the requested value counts as identified.
     want = arg0 / 1000.0
     landed = [name for name, a in zip(("PPT", "TDC", "EDC"), after)
               if abs(a - want) < 0.5]
@@ -99,30 +105,44 @@ def probe(msg_id, arg0, label, unit, baseline):
           f"PPT {baseline[0]:.1f}->{after[0]:.1f} W  "
           f"TDC {baseline[1]:.1f}->{after[1]:.1f} A  "
           f"EDC {baseline[2]:.1f}->{after[2]:.1f} A")
+
     if rsp != 1:
         print(f"       SMU refused the write (RSP={rsp}); nothing to conclude from it.")
-    elif not moved:
+        return after, None, False
+    if not moved:
         print("       accepted but no limit moved — either the field is not one of "
               "these three, or firmware clamped the value.")
-    else:
-        print(f"       moved: {', '.join(moved)}")
-    if moved and moved != landed:
-        print(f"       moved {moved} but read back as {want:g} only in {landed or 'nothing'}"
-              " — clamped or raced, not conclusive.")
-        return after, []
-    return after, moved
+        return after, None, False
+    if len(moved) > 1:
+        print(f"       moved {len(moved)} fields at once ({', '.join(moved)}) — this ID "
+              "does not identify a single limit, or something else is writing.")
+        return after, None, False
+
+    field = moved[0]
+    exact = moved == landed
+    print(f"       moved: {field}" + ("" if exact else
+          f" (to {dict(zip(('PPT', 'TDC', 'EDC'), after))[field]:g}, not the {want:g} "
+          "asked for — clamped or quantised; the identification stands, the value "
+          "does not)"))
+    return after, field, exact
 
 
-def restore_one(msg_id, moved, origin):
+def restore_one(msg_id, field, origin):
     """Send msg_id back to the pre-run value of whichever limit it was shown to drive.
 
-    `moved` unresolved means we never learned what this ID does, so there is nothing
-    to put back through it — and guessing is how the crossed restore happened.
+    An unresolved field means we never learned what this ID does, so there is nothing
+    to put back through it — and guessing is how the crossed restore happened. Raises
+    nothing: the caller has more cleanup to attempt after this one.
     """
     idx = {"PPT": 0, "TDC": 1, "EDC": 2}
-    if not moved or len(moved) != 1 or moved[0] not in idx:
+    if field not in idx:
         return
-    send(msg_id, int(round(origin[idx[moved[0]]])) * 1000)
+    try:
+        # Milli-units of the value we found, not of a rounded copy of it: rounding to
+        # whole amps first silently discards a fractional BIOS limit.
+        send(msg_id, int(round(origin[idx[field]] * 1000)))
+    except OSError as e:
+        print(f"  restore of 0x{msg_id:02X} failed ({e}) — continuing with the rest")
 
 
 def main():
@@ -146,48 +166,72 @@ def main():
                  f"limits ({origin[0]:.0f} W / {origin[1]:.0f} A / {origin[2]:.0f} A). "
                  "This probe only ever lowers a limit. Refusing.")
 
-    print(f"\nstep 0 — does the read-back work at all? PPT is not in dispute.")
-    after, moved = probe(MSG_PPT, PROBE_PPT_W * 1000, f"{PROBE_PPT_W} W", "W", base)
-    if moved != ["PPT"]:
-        send(MSG_PPT, int(round(origin[0])) * 1000)
-        sys.exit("d[2] did not follow an uncontested PPT write. The read-back method "
-                 "is void here, so d[8]/d[63] would prove nothing either. Stopping.")
-    send(MSG_PPT, int(round(origin[0])) * 1000)
-    time.sleep(SETTLE)
-    base = read_limits()
-    print("  read-back confirmed; PPT restored.")
+    if not all(math.isfinite(v) for v in origin):
+        sys.exit(f"baseline reads back non-finite ({origin}) — the offsets or the "
+                 "driver are not giving usable floats. Refusing to write.")
 
     verdict = {}
+    # Every ID this run has written through, whether or not it was attributed. The
+    # cleanup needs this: probe() can raise after the write has already landed, and
+    # a write nobody recorded is a limit nobody restores.
+    touched = []
     try:
+        print("\nstep 0 — does the read-back work at all? PPT is not in dispute.")
+        touched.append(MSG_PPT)
+        after, field, exact = probe(MSG_PPT, PROBE_PPT_W * 1000, f"{PROBE_PPT_W} W",
+                                    "W", base)
+        if field != "PPT" or not exact:
+            sys.exit("d[2] did not follow an uncontested PPT write. The read-back "
+                     "method is void here, so d[8]/d[63] would prove nothing either. "
+                     "Stopping.")
+        restore_one(MSG_PPT, "PPT", origin)
+        time.sleep(SETTLE)
+        base = read_limits()
+        print("  read-back confirmed; PPT restored.")
+
         for msg_id in (0x3D, 0x3C):
             print(f"\nstep — 0x{msg_id:02X}")
-            after, moved = probe(msg_id, PROBE_A * 1000, f"{PROBE_A} A", "A", base)
-            verdict[msg_id] = moved
+            touched.append(msg_id)
+            after, field, exact = probe(msg_id, PROBE_A * 1000, f"{PROBE_A} A", "A",
+                                        base)
+            verdict[msg_id] = field
             # Restore only the ID just tested, to the value its own field had before
-            # the run. The previous version restored *both* IDs from this trial's
+            # the run. An earlier version restored *both* IDs from this trial's
             # result, which on the second trial wrote them crossed: 180 A into a
-            # 120 A TDC. Which field this ID drives is exactly what `moved` says.
-            restore_one(msg_id, moved, origin)
+            # 120 A TDC. Which field this ID drives is exactly what probe() returns.
+            restore_one(msg_id, field, origin)
             time.sleep(SETTLE)
             base = read_limits()
     finally:
         # Ctrl-C, a short read or any exception above must not leave a limit lowered.
+        # Each attempt is independent: one failure must not cancel the others.
         print("\n--- restoring ---")
-        send(MSG_PPT, int(round(origin[0])) * 1000)
-        for msg_id in (0x3D, 0x3C):
-            restore_one(msg_id, verdict.get(msg_id), origin)
+        for msg_id in dict.fromkeys(touched):
+            restore_one(msg_id, "PPT" if msg_id == MSG_PPT else verdict.get(msg_id),
+                        origin)
         time.sleep(SETTLE)
-        final = read_limits()
-        print(f"final: PPT {final[0]:.1f} W  TDC {final[1]:.1f} A  EDC {final[2]:.1f} A")
-        if any(abs(f - o) > 0.5 for f, o in zip(final, origin)):
-            print("  WARNING: did not read back at the values this run started from "
-                  f"({origin[0]:.1f} W / {origin[1]:.1f} A / {origin[2]:.1f} A). "
-                  "Reboot to get the BIOS limits back.")
+        try:
+            final = read_limits()
+        except OSError as e:
+            final = None
+            print(f"  cannot read the limits back ({e}) — reboot to be sure.")
+        if final:
+            print(f"final: PPT {final[0]:.1f} W  TDC {final[1]:.1f} A  "
+                  f"EDC {final[2]:.1f} A")
+            off = [n for n, f, o in zip(("PPT", "TDC", "EDC"), final, origin)
+                   if abs(f - o) > 0.5]
+            if off:
+                # This is the honest case, not a formality: a write can land through
+                # an ID whose field was never identified, and then no amount of
+                # software knows which ID to send the old value back through.
+                print(f"  WARNING: {', '.join(off)} did not come back to the value "
+                      f"this run started from ({origin[0]:.1f} W / {origin[1]:.1f} A "
+                      f"/ {origin[2]:.1f} A). Reboot — the BIOS limits are restored "
+                      "on reset and nothing here can do better.")
 
     print("\n--- verdict ---")
-    for msg_id, moved in verdict.items():
-        name = moved[0] if len(moved) == 1 else (moved or ["nothing"])
-        print(f"  0x{msg_id:02X} = {name}")
+    for msg_id, field in verdict.items():
+        print(f"  0x{msg_id:02X} = {field or 'unresolved'}")
     print("A reboot restores the BIOS limits regardless of what this printed.")
 
 
