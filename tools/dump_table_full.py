@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Dump the PM table, labelled from PM_TABLE_MAP.md.
 
-Two modes, chosen by the hardware gate rather than by a flag:
+Modes are chosen by the hardware profile rather than by a flag:
 
-  validated hardware   every float with its documented meaning and confidence level
-  anything else        raw values only, no labels
+  full 9800X3D map     every float with its documented meaning and confidence level
+  other profiles       complete raw table, plus any separately validated ranges
 
 The labels used to live in a dict right here, which meant a third hand-maintained
 copy of the map alongside the GUI and the exporter — and it drifted badly. By the
@@ -26,12 +26,11 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hwgate import hardware_supported  # noqa: E402
+from hwgate import get_hardware_profile, map_labels_supported  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "PM_TABLE_MAP.md")
-N = 457
 
 ROW = re.compile(r"^\|\s*0x[0-9A-Fa-f]+(?:-0x[0-9A-Fa-f]+)?\s*\|"
                  r"\s*(\d+(?:-\d+)?)\s*\|")
@@ -62,16 +61,27 @@ def labels():
 
 
 def main():
+    profile, why = get_hardware_profile()
+    try:
+        with open("/sys/kernel/ryzen_smu_drv/pm_table_size", "rb") as f:
+            table_size = struct.unpack("<I", f.read(4))[0]
+    except (OSError, struct.error) as e:
+        sys.exit(f"cannot read PM table size: {e}")
+    if table_size % 4:
+        sys.exit(f"unexpected PM table size: {table_size} is not float32-aligned")
+    n = table_size // 4
     with open(PM, "rb") as f:
-        data = f.read(N * 4)
-    if len(data) != N * 4:
-        sys.exit(f"unexpected table size: {len(data)} bytes, expected {N * 4}")
-    floats = struct.unpack(f"<{N}f", data)
+        data = f.read(table_size)
+    if len(data) != table_size:
+        sys.exit(f"unexpected table size: {len(data)} bytes, expected {table_size}")
+    floats = struct.unpack(f"<{n}f", data)
 
-    ok, why = hardware_supported()
-    if not ok:
-        print(f"# unvalidated hardware: {why}")
-        print("# raw values only — the offsets in PM_TABLE_MAP.md do not apply here.")
+    if not map_labels_supported():
+        print(f"# no full labelled map for this profile: {why}")
+        if profile:
+            print(f"# validated per-core temperatures: d[{profile.core_temp}-"
+                  f"{profile.core_temp + profile.cores - 1}] (direct degrees C)")
+        print("# raw values otherwise — the 9800X3D PM_TABLE_MAP.md does not apply here.")
         print(f"# Please attach this dump and your CPU model to an issue.\n")
         for i, v in enumerate(floats):
             print(f"d[{i:3}] (0x{i * 4:03X}) = {v:14.4f}")

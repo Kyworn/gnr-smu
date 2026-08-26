@@ -256,7 +256,7 @@ followed by its live value in the *same* unit. See
 | Offset | Idx | Typical | Static | Meaning | Confidence |
 |--------|-----|---------|--------|---------|------------|
 | 0x42C | 267 | ~1.03 | N | Live Voltage (V) | MED |
-| 0x430 | 268 | 120.0 | Y | EDC Limit (mirror, A) | HIGH |
+| 0x430 | 268 | 120.0 | Y | **Static 120.0 parameter.** Not the EDC mirror it was labelled: EDC is 180 and this is 120. Not a *bit-identical* TDC mirror either — across the 640 snapshots in `research/demoted_series.bin` it is `0x42f00000` (exactly 120.0) while `d[8]` is `0x42f00001` (120.00001), differing in every snapshot. Equal to the TDC limit at this one stock operating point, which cannot separate a TDC-derived parameter from a constant that happens to be 120. A 9950X3D capture would settle it: there TDC is 160 and EDC 225 | LOW |
 | 0x434 | 269 | 1.148 | Y | SVI3 VDDCR_CPU VID (V) | HIGH |
 | 0x438 | 270 | 50 idle / 87 load | N | **Hotspot / instantaneous max Temperature (°C)** — *not* TDC current. Slope 1.02 vs k10temp Tctl; mean sits 0-3 °C above it. **Spiky**: unaveraged reads hit 63-90 °C at idle (stdev 2.7 vs 0.6 for k10temp), so always average this field. Real TDC current is d[9] | CONFIRMED (corrected — the old "TDC current" label was swapped with d[9]) |
 | 0x43C | 271 | ~1.26 | N | SVI3 VDDCR_SoC VID (V) | HIGH |

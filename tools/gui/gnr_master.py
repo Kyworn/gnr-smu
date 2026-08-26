@@ -14,18 +14,18 @@ CONFIG_PATH = os.path.join(
     "gnr_master.json",
 )
 
-# The offsets are validated on one machine only; tools/hwgate.py explains what that
-# means and refuses on anything else.
+# Only exact, measured PM-table profiles are accepted; tools/hwgate.py owns the
+# offsets and refuses unknown CPU/table combinations.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
+from hwgate import (curve_optimizer_command, get_hardware_profile,
+                    hardware_supported, msg_id_blocked, payload_allowed,
+                    smu_message_supported,
+                    smu_writes_supported)  # noqa: E402
 
-# MP1 message IDs. Corrected 2026-08-26: the GUI had 0x3D as TDC and 0x3C as EDC,
-# with an emphatic comment on each line and no measurement behind either. Settled by
-# read-back in research/probe_tdc_edc.py — write a value, see which PM-table limit
-# moves: 0x3D moved d[63] (EDC), 0x3C moved d[8] (TDC). The dialog was therefore
-# sending the TDC box to EDC and the EDC box to TDC, and an EDC of 180 A landed on a
-# TDC whose stock limit is 120 A.
-MSG_PPT, MSG_TDC, MSG_EDC = 0x3E, 0x3C, 0x3D
+# The MP1 message IDs now come from the hardware profile, per part. This file used to
+# name them inline with 0x3D as TDC and 0x3C as EDC, an emphatic comment on each line
+# and no measurement behind either; research/probe_tdc_edc.py settled it by read-back
+# and they were the wrong way round, so the dialog had been sending the TDC box to EDC.
 
 # --- Color Theme ---
 BG_MAIN = "#121826"
@@ -124,12 +124,13 @@ class CoreControlDialog(QDialog):
         self.setStyleSheet(
             f"background-color: {BG_MAIN}; color: {TEXT_MAIN}; font-family: 'Segoe UI';"
         )
-        self.setFixedSize(350, 400)
+        height = 400 if len(current_co_offsets) <= 8 else 560
+        self.setFixedSize(350, height)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Set Curve Optimizer Offsets per Core:"))
         self.spins = []
         grid = QGridLayout()
-        for i in range(8):
+        for i in range(len(current_co_offsets)):
             lbl = QLabel(f"Core {i}:")
             spin = QSpinBox()
             spin.setRange(-50, 20)
@@ -265,18 +266,26 @@ class CoreWidget(QFrame):
 class GNRMaster(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("GNR Master - AMD Ryzen 7 9800X3D Telemetry")
-        self.setMinimumSize(1250, 720)
+        self.profile, self.profile_reason = get_hardware_profile()
+        self.core_count = self.profile.cores if self.profile else 8
+        cpu_name = self.profile.name if self.profile else "Unsupported CPU"
+        self.setWindowTitle(f"GNR Master - {cpu_name} Telemetry")
+        self.setMinimumSize(1500 if self.core_count > 8 else 1250, 720)
         self.setStyleSheet(
             f"background-color: {BG_MAIN}; color: {TEXT_MAIN}; font-family: 'Segoe UI';"
         )
 
-        self.current_ppt, self.current_tdc, self.current_edc = self._read_pm_limits()
+        # None on unvalidated hardware: no profile means no defensible default, and
+        # the write dialog must not be pre-filled with another part's numbers. The
+        # guardrails already block writes there, so this only affects what is shown.
+        limits = self._read_pm_limits()
+        self.current_ppt, self.current_tdc, self.current_edc = limits or (None, None, None)
         self.current_co = self.load_co_config()
         self.power_history = collections.deque([0.0] * 100, maxlen=100)
         self.temp_history = collections.deque([40.0] * 100, maxlen=100)
         self.core_load_history = [
-            collections.deque([0.0] * 20, maxlen=20) for _ in range(8)
+            collections.deque([0.0] * 20, maxlen=20)
+            for _ in range(self.core_count)
         ]
         # d[270] hotspot is very spiky (single reads jump +14 °C at idle) — smooth it
         self.hotspot_history = collections.deque([40.0] * 8, maxlen=8)
@@ -400,10 +409,11 @@ class GNRMaster(QMainWindow):
         grid = QGridLayout()
         grid.setSpacing(8)
         self.core_widgets = []
-        for i in range(8):
-            cw = CoreWidget(f"0-{i}")
+        grid_columns = 8 if self.core_count > 8 else 4
+        for i in range(self.core_count):
+            cw = CoreWidget(f"{i // 8}-{i % 8}")
             self.core_widgets.append(cw)
-            grid.addWidget(cw, i // 4, i % 4)
+            grid.addWidget(cw, i // grid_columns, i % grid_columns)
         cores_layout.addLayout(grid)
         middle_layout.addWidget(cores_frame, 3)
 
@@ -570,10 +580,11 @@ class GNRMaster(QMainWindow):
             if os.path.exists(CONFIG_PATH):
                 with open(CONFIG_PATH, "r") as f:
                     data = json.load(f)
-                return data.get("co_offsets", [0] * 8)
+                offsets = data.get("co_offsets", [])
+                return (offsets + [0] * self.core_count)[:self.core_count]
         except Exception:
             pass
-        return [0] * 8
+        return [0] * self.core_count
 
     def save_co_config(self):
         try:
@@ -584,13 +595,30 @@ class GNRMaster(QMainWindow):
             pass
 
     def send_smu_cmd(self, msg_id, arg0=0):
-        ok, why = hardware_supported()
+        ok, why = smu_writes_supported()
         if not ok:
             self.log_msg(f"GUARDRAIL: SMU writes disabled — {why}", "ERROR", ACCENT_RED)
+            return False
+        # An ID has to clear both: the allowlist is what this profile is known to
+        # accept, the never-send list what nothing may send on any part.
+        if not smu_message_supported(self.profile, msg_id):
+            self.log_msg(
+                f"GUARDRAIL: MSG {hex(msg_id)} is not in the {self.profile.name} "
+                "command allowlist",
+                "ERROR", ACCENT_RED,
+            )
             return False
         blocked, reason = msg_id_blocked(msg_id)
         if blocked:
             self.log_msg(f"GUARDRAIL: {reason}", "ERROR", ACCENT_RED)
+            return False
+        # The ID being allowed says nothing about the number riding with it, and the
+        # arg0 & 0xFFFFFFFF below would happily turn a negative spinbox value into
+        # four billion milliamps. The spinbox bounds are a convenience; this is the
+        # check.
+        ok, why = payload_allowed(self.profile, msg_id, arg0)
+        if not ok:
+            self.log_msg(f"GUARDRAIL: {why}", "ERROR", ACCENT_RED)
             return False
 
         SMU_ARGS = "/sys/kernel/ryzen_smu_drv/smu_args"
@@ -629,46 +657,92 @@ class GNRMaster(QMainWindow):
             self.log_msg(f"SMU write failed: {str(e)}", "ERROR", ACCENT_RED)
             return False
 
+    def _smu_controls_available(self):
+        ok, why = smu_writes_supported()
+        if not ok:
+            self.log_msg(
+                f"GUARDRAIL: SMU controls disabled — {why}", "ERROR", ACCENT_RED
+            )
+        return ok
+
     def open_power_control(self):
+        if not self._smu_controls_available():
+            return
+        if None in (self.current_ppt, self.current_tdc, self.current_edc):
+            # _smu_controls_available() already covers this, but the dialog does
+            # arithmetic on these and a None here would be a traceback in a window
+            # that is about to write to the SMU.
+            self.log_msg("Current limits unknown — refusing to open the write dialog "
+                         "with no defensible defaults.", "ERROR", ACCENT_RED)
+            return
         dlg = PowerControlDialog(
             self.current_ppt, self.current_tdc, self.current_edc, self
         )
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.current_ppt = dlg.inputs["PPT"].value()
-            self.current_tdc = dlg.inputs["TDC"].value()
-            self.current_edc = dlg.inputs["EDC"].value()
-            self.send_smu_cmd(MSG_PPT, int(self.current_ppt * 1000))
-            self.send_smu_cmd(MSG_TDC, int(self.current_tdc * 1000))
-            self.send_smu_cmd(MSG_EDC, int(self.current_edc * 1000))
+            requested = {
+                "PPT": dlg.inputs["PPT"].value(),
+                "TDC": dlg.inputs["TDC"].value(),
+                "EDC": dlg.inputs["EDC"].value(),
+            }
+            current = {"PPT": self.current_ppt, "TDC": self.current_tdc,
+                       "EDC": self.current_edc}
+            changed = {name: value for name, value in requested.items()
+                       if abs(value - current[name]) >= 0.001}
+            if not changed:
+                self.log_msg("Power limits unchanged; nothing sent.", "STATUS")
+                return
+            commands = {
+                "PPT": self.profile.ppt_msg,
+                "TDC": self.profile.tdc_msg,
+                "EDC": self.profile.edc_msg,
+            }
+            for name, value in changed.items():
+                if self.send_smu_cmd(commands[name], int(value * 1000)):
+                    setattr(self, f"current_{name.lower()}", value)
 
     def open_core_control(self):
+        if not self._smu_controls_available():
+            return
         dlg = CoreControlDialog(self.current_co, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            for i, spin in enumerate(dlg.spins):
-                val = spin.value()
-                if val != self.current_co[i]:
-                    self.current_co[i] = val
-                    msg_id = 0x50 + i
-                    arg0 = val & 0xFFFFFFFF
-                    self.send_smu_cmd(msg_id, arg0)
-            self.save_co_config()
-            self.log_msg(f"CO offsets saved: {self.current_co}", "STATUS", ACCENT_GREEN)
+            changed = [(i, spin.value()) for i, spin in enumerate(dlg.spins)
+                       if spin.value() != self.current_co[i]]
+            if not changed:
+                self.log_msg("Curve Optimizer unchanged; nothing sent.", "STATUS")
+                return
+            applied = []
+            for core, value in changed:
+                msg_id, arg0 = curve_optimizer_command(self.profile, core, value)
+                if self.send_smu_cmd(msg_id, arg0):
+                    self.current_co[core] = value
+                    applied.append(core)
+            if applied:
+                self.save_co_config()
+                self.log_msg(
+                    f"CO offsets applied and cached for cores {applied}: "
+                    f"{self.current_co}", "STATUS", ACCENT_GREEN,
+                )
 
     def _read_pm_limits(self):
-        # Stock 9800X3D spec is the fallback: on unvalidated hardware these offsets
-        # hold something else, and this feeds the write dialog's defaults.
-        if not hardware_supported()[0]:
-            return 162.0, 120.0, 180.0
+        # Fallback comes from the profile, not from a copy of the 9800X3D's numbers:
+        # this feeds the write dialog's defaults, and handing a 9950X3D 162/120/180
+        # because its table read failed is the kind of wrong default that gets
+        # written back. Unvalidated hardware has no profile and so gets nothing.
+        if not hardware_supported()[0] or self.profile is None:
+            return None
+        stock = (float(self.profile.stock_ppt), float(self.profile.stock_tdc),
+                 float(self.profile.stock_edc))
         try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
-                d = struct.unpack("<457f", f.read(1828))
+                d = struct.unpack(f"<{self.profile.float_count}f",
+                                  f.read(self.profile.table_size))
             # PPT=d[2], TDC=d[8] (0x020), EDC=d[63] (0x0FC). Corrected 2026-07-30:
             # this used to return d[10] as TDC — that offset is the thermal limit
             # in °C (88), so the write dialog pre-filled TDC with 88 A and EDC
             # with 120 A (the real TDC limit).
             return d[2], d[8], d[63]
         except Exception:
-            return 162.0, 120.0, 180.0
+            return stock
 
     def update_data(self):
         ok, why = hardware_supported()
@@ -683,9 +757,9 @@ class GNRMaster(QMainWindow):
 
         try:
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
-                data = f.read(1828)
-                if len(data) == 1828:
-                    d = struct.unpack("<457f", data)
+                data = f.read(self.profile.table_size)
+                if len(data) == self.profile.table_size:
+                    d = struct.unpack(f"<{self.profile.float_count}f", data)
                     # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected
                     # 2026-07-30. d[8] is TDC (not EDC), d[10] is the thermal limit
                     # in °C (not TDC in A), and EDC's limit lives at d[63].
@@ -709,8 +783,10 @@ class GNRMaster(QMainWindow):
                     self.power_history.append(pkg_pwr)
                     self.power_curve.setData(list(range(100)), list(self.power_history))
 
-                    vcores = [d[309 + i] for i in range(8)]
-                    vcore_peak, vcore_avg = max(vcores), sum(vcores) / 8
+                    vcores = [d[self.profile.core_voltage + i]
+                              for i in range(self.core_count)]
+                    vcore_peak = max(vcores)
+                    vcore_avg = sum(vcores) / self.core_count
                     self.vcore_gauge.setValue(
                         vcore_peak, f"{vcore_peak:.3f} V", f"Avg: {vcore_avg:.3f} V"
                     )
@@ -736,22 +812,27 @@ class GNRMaster(QMainWindow):
                     self.uclk_lbl.setText(f"Memory Clock (UCLK):\n{d[75]:.0f} MHz")
                     self.mclk_lbl.setText(f"Memory Clock (MCLK):\n{d[79]:.0f} MHz")
                     # Max core temp history
-                    max_temp = max(d[317 + i] for i in range(8))
+                    max_temp = max(d[self.profile.core_temp + i]
+                                   for i in range(self.core_count))
                     self.temp_history.append(max_temp)
                     self.temp_curve.setData(list(range(100)), list(self.temp_history))
 
-                    for i in range(8):
-                        volt, temp = d[309 + i], d[317 + i]
-                        freq, max_freq = d[325 + i] * 1000, d[373 + i] * 1000
-                        c0_residency = d[357 + i]
-                        load = min(100, c0_residency * 100)
+                    for i in range(self.core_count):
+                        volt = d[self.profile.core_voltage + i]
+                        temp = d[self.profile.core_temp + i]
+                        freq = d[self.profile.core_freq + i] * 1000
+                        max_freq = d[self.profile.core_boost_limit + i] * 1000
+                        c6_residency = d[self.profile.core_c6 + i]
+                        load = max(0, min(100, 100 - c6_residency))
                         cw = self.core_widgets[i]
                         cw.freq_lbl.setText(f"{freq:.2f} MHz")
                         cw.max_lbl.setText(f"Max: {max_freq:.2f} MHz")
                         cw.volt_lbl.setText(f"⚡ {volt:.3f} V")
                         cw.temp_lbl.setText(f"🌡 {temp:.2f} C")
                         cw.co_lbl.setText(f"CO: {self.current_co[i]}")
-                        cw.pwr_lbl.setText(f"{d[333 + i]:.2f} W")
+                        cw.pwr_lbl.setText(
+                            f"{d[self.profile.core_power + i]:.2f} W"
+                        )
 
                         self.core_load_history[i].append(load)
                         cw.bg.setOpts(height=list(self.core_load_history[i]))
