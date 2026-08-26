@@ -23,6 +23,10 @@ Open an issue with that file and your exact CPU model. The dump tool works on
 unvalidated hardware on purpose: it drops the labels and prints raw values, which is
 exactly what is needed to compare layouts.
 
+[@tpoechtrager](https://github.com/tpoechtrager) has since sent the first one, from a
+9950X3D — see [Credits](#credits). One more part still helps, particularly a non-X3D or
+a 12-core.
+
 Why it matters: every offset here comes from one machine, so nothing distinguishes
 "this is where AMD puts Tctl" from "this is where Tctl landed on my 9800X3D". A second
 part settles that. A 12- or 16-core part also settles where the per-core arrays end,
@@ -166,6 +170,17 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   thermal limit in the table reads 88 °C.
 - SMU settings are volatile — a reboot reverts everything to BIOS constraints. That is
   also your recovery path.
+
+## Credits
+
+[@tpoechtrager](https://github.com/tpoechtrager) sent the first PM-table dump from a
+second Granite Ridge part (Ryzen 9 9950X3D, table version `0x620205`, 613 floats) and
+opened [PR #1](https://github.com/Kyworn/gnr-smu/pull/1) mapping its per-core arrays,
+validated across both CCDs against `Tccd1`/`Tccd2`. That PR also used the ZenStates MP1
+command order, which disagreed with this repo's — and it turned out this repo was the one
+that had never measured it. The correction is in
+[docs/FINDINGS.md](docs/FINDINGS.md#4a-power-limits-mp1); the tools had been writing the
+TDC box to EDC and back until then.
 
 ## License
 

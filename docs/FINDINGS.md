@@ -81,6 +81,9 @@ This matches ZenStates-Core. The "hardlocked by firmware" note was also wrong: b
 writes returned `RSP=1` and both took effect. The consequence was not cosmetic — the
 CLI's reset-to-stock sent 180 A to a TDC whose stock limit is 120 A.
 
+Surfaced by @tpoechtrager: his 9950X3D profile in PR #1 used the ZenStates order, and
+checking why it disagreed with ours is what exposed that ours had never been measured.
+
 ### 4b. Curve Optimizer (MP1)
 - **0x50 to 0x57:** Per-core optimization (C0 to C7).
 - **ARG0 Format:** Signed 32-bit integer (e.g., -30 = `0xFFFFFFE2`). Write-only, requires local JSON caching for GUI persistence.
