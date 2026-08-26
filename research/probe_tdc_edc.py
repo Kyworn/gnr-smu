@@ -46,10 +46,10 @@ ARGS = "/sys/kernel/ryzen_smu_drv/smu_args"
 EXPECTED_PM_VERSION = 0x620105
 
 MSG_PPT = 0x3E
-STOCK_PPT_W, STOCK_TDC_A, STOCK_EDC_A = 162, 120, 180
 
-# Below stock TDC (120 A) and stock EDC (180 A) both, so it is a reduction whichever
-# limit it lands on. Distinctive enough not to be confused with a stock value.
+# Below both current limits, checked against the live values at startup rather than
+# against a stock figure this file would otherwise have to keep its own copy of.
+# Distinctive enough not to be confused with a stock or BIOS value.
 PROBE_A = 111
 PROBE_PPT_W = 151
 
@@ -149,10 +149,10 @@ def main():
     print(f"\nstep 0 — does the read-back work at all? PPT is not in dispute.")
     after, moved = probe(MSG_PPT, PROBE_PPT_W * 1000, f"{PROBE_PPT_W} W", "W", base)
     if moved != ["PPT"]:
-        send(MSG_PPT, STOCK_PPT_W * 1000)
+        send(MSG_PPT, int(round(origin[0])) * 1000)
         sys.exit("d[2] did not follow an uncontested PPT write. The read-back method "
                  "is void here, so d[8]/d[63] would prove nothing either. Stopping.")
-    send(MSG_PPT, STOCK_PPT_W * 1000)
+    send(MSG_PPT, int(round(origin[0])) * 1000)
     time.sleep(SETTLE)
     base = read_limits()
     print("  read-back confirmed; PPT restored.")

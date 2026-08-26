@@ -13,7 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools"))
-from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
+from hwgate import msg_id_blocked, smu_writes_supported  # noqa: E402
 
 
 def guard(msg_id, mailbox="mp1"):
@@ -22,7 +22,7 @@ def guard(msg_id, mailbox="mp1"):
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
     addresses below are also this-part-specific — on another CPU they are just some
     other register."""
-    ok, why = hardware_supported()
+    ok, why = smu_writes_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
     blocked, reason = msg_id_blocked(msg_id, mailbox)
@@ -61,10 +61,14 @@ def smu_send(mb_type, msg_id, arg0=0, timeout=1.0):
     # The mailbox has to reach the guard: the never-send list is MP1's, and the
     # pmtable path below rides RSMU 0x04/0x05, which collide with dangerous MP1 IDs.
     guard(msg_id, mb_type)
+    # Explicit, because the old `else` meant an unrecognised name silently selected
+    # RSMU — the same typo that would have slipped past the guard above.
     if mb_type == "mp1":
         m, r, a = MP1_MSG, MP1_RSP, MP1_ARG0
-    else:
+    elif mb_type == "rsmu":
         m, r, a = RSMU_MSG, RSMU_RSP, RSMU_ARG0
+    else:
+        sys.exit(f"REFUSED: unknown mailbox {mb_type!r}")
     
     smn_write(r, 0)
     smn_write(a, arg0)

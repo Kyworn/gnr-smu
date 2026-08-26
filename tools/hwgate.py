@@ -82,6 +82,8 @@ PROFILES = {
 BLOCKED_MP1_IDS = {0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x70))
 BLOCKED_MSG_IDS = BLOCKED_MP1_IDS  # old name, kept for callers
 
+MAILBOXES = ("mp1", "rsmu")
+
 
 def msg_id_blocked(msg_id, mailbox="mp1"):
     """(blocked, reason). Reason is None when the ID is allowed.
@@ -92,6 +94,11 @@ def msg_id_blocked(msg_id, mailbox="mp1"):
     pair, while MP1 0x04/0x05 are on the dangerous list. Applying one list to the
     other blocks a harmless read and would tell you nothing about a harmful write.
     """
+    if mailbox not in MAILBOXES:
+        # Fail closed. A typo would otherwise mean "not MP1, therefore allowed", and
+        # the caller most likely also resolved it to some default endpoint.
+        return True, (f"unknown mailbox {mailbox!r} — refusing rather than guessing "
+                      f"which never-send list applies (known: {', '.join(MAILBOXES)})")
     if mailbox != "mp1":
         return False, None
     if 0x58 <= msg_id <= 0x6F:
@@ -285,6 +292,11 @@ if __name__ == "__main__":
     for rsmu_id in (0x04, 0x05, 0x3C, 0x5D):
         assert not msg_id_blocked(rsmu_id, mailbox="rsmu")[0], \
             f"RSMU 0x{rsmu_id:02x} must not be judged against the MP1 never-send list"
+
+    # An unrecognised mailbox must fail closed, not fall through to "allowed".
+    for junk in ("MP1", "rsmu ", "", None):
+        assert msg_id_blocked(0x02, mailbox=junk)[0], \
+            f"mailbox {junk!r} must be refused, not treated as non-MP1"
 
     profile, why = get_hardware_profile()
     print(f"{'SUPPORTED' if profile else 'REFUSED'}: {why}")
