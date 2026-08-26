@@ -5,8 +5,30 @@ SMU MP1 mailbox tool — AMD Granite Ridge (Ryzen 9000 desktop / 9800X3D)
 
 import subprocess
 import time
-import sys
 import argparse
+
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "tools"))
+from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
+
+
+def guard(msg_id):
+    """Refuse the send, or return None. Both checks matter here and neither existed
+    before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
+    ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
+    addresses below are also this-part-specific — on another CPU they are just some
+    other register."""
+    ok, why = hardware_supported()
+    if not ok:
+        sys.exit(f"REFUSED: {why}")
+    blocked, reason = msg_id_blocked(msg_id)
+    if blocked:
+        sys.exit(f"REFUSED: {reason}")
+
+
 
 PCI_DEV  = "00:00.0"
 MSG_ADDR = 0x3B10530
@@ -50,6 +72,7 @@ def smn_write(addr: int, value: int):
 
 
 def smu_send(msg_id: int, arg0: int = 0, timeout: float = 1.0) -> tuple[int, int, int]:
+    guard(msg_id)
     smn_write(RSP_ADDR, 0)
     smn_write(ARG0_ADDR, arg0)
     smn_write(MSG_ADDR, msg_id)

@@ -17,7 +17,7 @@ CONFIG_PATH = os.path.join(
 # The offsets are validated on one machine only; tools/hwgate.py explains what that
 # means and refuses on anything else.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from hwgate import hardware_supported  # noqa: E402
+from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
 
 # MP1 message IDs. Corrected 2026-08-26: the GUI had 0x3D as TDC and 0x3C as EDC,
 # with an emphatic comment on each line and no measurement behind either. Settled by
@@ -588,13 +588,9 @@ class GNRMaster(QMainWindow):
         if not ok:
             self.log_msg(f"GUARDRAIL: SMU writes disabled — {why}", "ERROR", ACCENT_RED)
             return False
-        if msg_id == 0x10:
-            self.log_msg("FATAL GUARDRAIL: MSG 0x10 BLOCKED", "ERROR", ACCENT_RED)
-            return False
-        if 0x03 <= msg_id <= 0x0D:
-            self.log_msg(
-                f"GUARDRAIL: MSG {hex(msg_id)} BLOCKED", "WARNING", ACCENT_ORANGE
-            )
+        blocked, reason = msg_id_blocked(msg_id)
+        if blocked:
+            self.log_msg(f"GUARDRAIL: {reason}", "ERROR", ACCENT_RED)
             return False
 
         SMU_ARGS = "/sys/kernel/ryzen_smu_drv/smu_args"

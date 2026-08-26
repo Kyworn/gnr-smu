@@ -5,7 +5,7 @@ import struct
 import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hwgate import hardware_supported
+from hwgate import hardware_supported, msg_id_blocked
 
 CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
@@ -32,9 +32,8 @@ CORES = 8
 # 180 A against a 120 A stock limit, and the EDC menu accepted up to 250 A of TDC.
 MSG_PPT, MSG_TDC, MSG_EDC = 0x3E, 0x3C, 0x3D
 
-# The GUI blocks these outright; the CLI never sends them, but it applies the same
-# rule so the two cannot drift. 0x10 and 0x03-0x0D are the dangerous MP1 IDs.
-BLOCKED = {0x10} | set(range(0x03, 0x0E))
+# The never-send list lives in hwgate.py so the CLI, the GUI and the research tools
+# cannot drift apart. It used to be spelled out here and again as two ifs in the GUI.
 
 
 def apply_cmd(msg_id, arg0):
@@ -42,8 +41,9 @@ def apply_cmd(msg_id, arg0):
     if not ok:
         print(f"[BLOCKED] SMU writes disabled: {why}")
         return False
-    if msg_id in BLOCKED:
-        print(f"[BLOCKED] guardrail: MSG 0x{msg_id:02x}")
+    blocked, reason = msg_id_blocked(msg_id)
+    if blocked:
+        print(f"[BLOCKED] guardrail: {reason}")
         return False
 
     smu_args = "/sys/kernel/ryzen_smu_drv/smu_args"
