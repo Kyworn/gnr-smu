@@ -27,9 +27,13 @@ Open an issue with that file and your exact CPU model. The dump tool works on
 unvalidated hardware on purpose: it drops the labels and prints raw values, which is
 exactly what is needed to compare layouts.
 
-Why it matters: the complete labelled map still comes from the 9800X3D. The 9950X3D
-establishes how the 16-wide per-core arrays shift, but most of its remaining 613-float
-table has not yet been identified.
+[@tpoechtrager](https://github.com/tpoechtrager) sent the first one, from a 9950X3D —
+see [Credits](#credits). One more part still helps, particularly a non-X3D or a 12-core.
+
+Why it matters: a layout from one machine cannot distinguish "this is where AMD puts
+Tctl" from "this is where Tctl landed on my 9800X3D". The 9950X3D settles that for the
+per-core arrays, and establishes how the 16-wide ones shift. But the complete labelled
+map is still the 9800X3D's: most of the 9950X3D's 613 floats remain unidentified.
 
 The other open questions need a different lever rather than more data. Thirteen fields
 have a narrowed domain but no identification, because under load every axis rises at
@@ -132,11 +136,15 @@ sudo python3 tools/dump_table_full.py      # complete table; labels where mapped
 ```
 
 SMU control uses profile-specific MP1 mailbox **message IDs** (not table offsets).
-On the 9800X3D the empirically mapped commands remain `0x3E` PPT, `0x3D` TDC,
-`0x3C` EDC and `0x50`-`0x57` per-core CO. The 9950X3D profile uses the maintained
-ZenStates-Core mapping: `0x3E` PPT, `0x3C` TDC, `0x3D` EDC and `0x35` per-core CO
-with CCD/core selection encoded in the argument. Curve Optimizer is write-only, so
-the tools cache applied offsets in `$XDG_CONFIG_HOME/gnr_master.json`.
+Power limits are the same on both parts — `0x3E` PPT, `0x3C` TDC, `0x3D` EDC. This repo
+asserted `0x3D` TDC / `0x3C` EDC until 2026-08-26, on the strength of a note that named
+no measurement; `research/probe_tdc_edc.py` settles it by writing a value and reading
+back which limit moved.
+
+Curve Optimizer differs: `0x50`-`0x57` per core on the 9800X3D, as a signed 32-bit
+value, against `0x35` on the 9950X3D with the CCD and core encoded into the argument.
+It is write-only either way — the SMU will not read the offsets back, so the tools
+cache them in `$XDG_CONFIG_HOME/gnr_master.json` to keep the display honest.
 
 `research/` holds the measurement scripts, one per question asked: `audit_map.py`
 (the map's regression gate), `recheck_zone0.py` / `recheck_sweep.py` / `recheck_edc.py`
@@ -170,6 +178,17 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   table reports 88 °C on the tested 9800X3D and 95 °C on the tested 9950X3D.
 - SMU settings are volatile — a reboot reverts everything to BIOS constraints. That is
   also your recovery path.
+
+## Credits
+
+[@tpoechtrager](https://github.com/tpoechtrager) sent the first PM-table dump from a
+second Granite Ridge part (Ryzen 9 9950X3D, table version `0x620205`, 613 floats) and
+opened [PR #1](https://github.com/Kyworn/gnr-smu/pull/1) mapping its per-core arrays,
+validated across both CCDs against `Tccd1`/`Tccd2`. That PR also used the ZenStates MP1
+command order, which disagreed with this repo's — and it turned out this repo was the one
+that had never measured it. The correction is in
+[docs/FINDINGS.md](docs/FINDINGS.md#4a-power-limits-mp1); the tools had been writing the
+TDC box to EDC and back until then.
 
 ## License
 

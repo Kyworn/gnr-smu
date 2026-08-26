@@ -65,6 +65,26 @@ PROFILES = {
     ),
 }
 
+# MP1 message IDs that must never be sent, wherever the send happens. This lived as a
+# set literal in the CLI and as two separate ifs in the GUI, and the research tools had
+# no equivalent at all — the same three-copies-of-one-rule shape that let the TDC/EDC
+# mapping stay wrong in one copy for months.
+#
+#   0x03-0x0D, 0x10   dangerous MP1 IDs (docs/FINDINGS.md)
+#   0x58-0x5D         freeze MP1 on this part: no response, recovery needs a reboot
+BLOCKED_MSG_IDS = {0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x5E))
+
+
+def msg_id_blocked(msg_id):
+    """(blocked, reason). Reason is None when the ID is allowed."""
+    if 0x58 <= msg_id <= 0x5D:
+        return True, (f"MSG 0x{msg_id:02x} freezes MP1 on Granite Ridge — no response, "
+                      "recovery needs a reboot")
+    if msg_id in BLOCKED_MSG_IDS:
+        return True, f"MSG 0x{msg_id:02x} is on the never-send list"
+    return False, None
+
+
 _cached = None
 
 
@@ -189,8 +209,55 @@ def map_labels_supported():
 
 
 if __name__ == "__main__":
+    import tempfile
+
+    def _cpuinfo(*blocks):
+        """Real /proc/cpuinfo shape: blank-line-separated blocks, which is what the
+        parser keys on."""
+        return "\n\n".join(blocks) + "\n"
+
+    # The parser is the only part worth checking without the hardware present, and it
+    # got more complex when it started tracking (package, core id) pairs rather than
+    # core ids alone. That is the reason to keep these, not to drop them.
+    def _count(text):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write(text)
+            path = f.name
+        # outside the with: the file has to be flushed before it is read back
+        return _core_count(path)
+
+    one_socket = _cpuinfo(
+        "processor\t: 0\nphysical id\t: 0\ncore id\t\t: 0",
+        "processor\t: 1\nphysical id\t: 0\ncore id\t\t: 0",
+        "processor\t: 2\nphysical id\t: 0\ncore id\t\t: 1",
+    )
+    assert _count(one_socket) == 2, "two distinct core ids, three processor blocks"
+
+    # The whole point of keying on (package, core): core id 0 appears in both sockets
+    # and must count twice. The previous set-of-core-ids parser returned 1 here.
+    two_sockets = _cpuinfo(
+        "processor\t: 0\nphysical id\t: 0\ncore id\t\t: 0",
+        "processor\t: 1\nphysical id\t: 1\ncore id\t\t: 0",
+    )
+    assert _count(two_sockets) == 2, "same core id on two packages is two cores"
+
+    # No trailing blank line after the last block — the parser has to flush it.
+    assert _count("processor\t: 0\nphysical id\t: 0\ncore id\t\t: 0") == 1
+
+    assert _core_count("/nonexistent") == 0, "unreadable cpuinfo must not claim a count"
+
+    # An allowlist and a never-send list are different things and both have to hold:
+    # smu_message_supported() says what a profile is known to accept, msg_id_blocked()
+    # says what nothing may send on any part.
+    for blocked_id in (0x03, 0x0D, 0x10, 0x58, 0x5D):
+        assert msg_id_blocked(blocked_id)[0], f"0x{blocked_id:02x} must be blocked"
+    for allowed_id in (0x02, 0x0E, 0x3C, 0x3D, 0x3E, 0x50, 0x57, 0x5E):
+        assert not msg_id_blocked(allowed_id)[0], f"0x{allowed_id:02x} must be allowed"
+
     profile, why = get_hardware_profile()
     print(f"{'SUPPORTED' if profile else 'REFUSED'}: {why}")
+    print(f"this machine reports {_core_count()} physical cores")
+    print(f"never-send list: {len(BLOCKED_MSG_IDS)} message IDs")
     if profile:
         print(f"per-core temperatures: d[{profile.core_temp}.."
               f"{profile.core_temp + profile.cores - 1}]")

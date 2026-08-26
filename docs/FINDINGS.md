@@ -61,8 +61,28 @@ table are in [PM_TABLE_MAP.md](../PM_TABLE_MAP.md#re-verification-2026-07-30).
 
 ### 4a. Power Limits (MP1)
 - **0x3E:** Set PPT Limit (mW)
-- **0x3C:** Set EDC Limit (mA)
-- **0x3D:** Set TDC Limit (mA)  *(Note: Hardlocked by firmware limits on 9800X3D to prevent thermocollapse)*
+- **0x3C:** Set TDC Limit (mA)
+- **0x3D:** Set EDC Limit (mA)
+
+**⚠ Corrected 2026-08-26 — these two were the wrong way round here.** The claim rested
+on a "validated via fuzzing" line in TOFIX.md that named no script and recorded no
+number, and on a table in BASELINE_SNAPSHOT.md whose only evidence was `RSP=0x01` — the
+SMU accepting a message, which says nothing about which limit it moved. Both limits are
+readable in the PM table, so it is directly observable. `research/probe_tdc_edc.py`
+writes a distinctive value and reads back which one changed:
+
+| Sent | PM table field that moved |
+|---|---|
+| `0x3E` <- 151 W | `d[2]` PPT — the uncontested control, run first to validate the method |
+| `0x3D` <- 111 A | `d[63]` **EDC** |
+| `0x3C` <- 111 A | `d[8]` **TDC** |
+
+This matches ZenStates-Core. The "hardlocked by firmware" note was also wrong: both
+writes returned `RSP=1` and both took effect. The consequence was not cosmetic — the
+CLI's reset-to-stock sent 180 A to a TDC whose stock limit is 120 A.
+
+Surfaced by @tpoechtrager: his 9950X3D profile in PR #1 used the ZenStates order, and
+checking why it disagreed with ours is what exposed that ours had never been measured.
 
 ### 4b. Curve Optimizer (MP1)
 - **0x50 to 0x57:** Per-core optimization (C0 to C7).

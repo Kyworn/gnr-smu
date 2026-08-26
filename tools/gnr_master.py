@@ -6,16 +6,21 @@ import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hwgate import (curve_optimizer_command, get_hardware_profile,
-                    smu_message_supported, smu_writes_supported)
+                    msg_id_blocked, smu_message_supported, smu_writes_supported)
 
 CONFIG_PATH = os.path.join(
     os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
     "gnr_master.json",
 )
 
-# The GUI blocks these outright; the CLI never sends them, but it applies the same
-# rule so the two cannot drift. 0x10 and 0x03-0x0D are the dangerous MP1 IDs.
-BLOCKED = {0x10} | set(range(0x03, 0x0E))
+# Stock limits and MP1 message IDs live on the hardware profile in hwgate.py — per
+# part, since they differ. 0x3C is TDC and 0x3D is EDC, established by read-back in
+# research/probe_tdc_edc.py after this file had them the other way round; the swap was
+# not cosmetic, "reset to stock" was writing 180 A into a 120 A TDC.
+#
+# The never-send list also lives in hwgate.py, so the CLI, the GUI and the research
+# tools cannot drift apart. It used to be spelled out here and again as two ifs in
+# the GUI.
 
 
 def apply_cmd(msg_id, arg0):
@@ -23,12 +28,16 @@ def apply_cmd(msg_id, arg0):
     if not ok:
         print(f"[BLOCKED] SMU writes disabled: {why}")
         return False
+    # Two different questions, and an ID has to clear both: the allowlist says what
+    # this profile is known to accept, the never-send list what nothing may send on any
+    # part — including IDs the SMU answers happily.
     profile, _ = get_hardware_profile()
     if not smu_message_supported(profile, msg_id):
         print(f"[BLOCKED] MSG 0x{msg_id:02x} is not in the {profile.name} allowlist")
         return False
-    if msg_id in BLOCKED:
-        print(f"[BLOCKED] guardrail: MSG 0x{msg_id:02x}")
+    blocked, reason = msg_id_blocked(msg_id)
+    if blocked:
+        print(f"[BLOCKED] guardrail: {reason}")
         return False
 
     smu_args = "/sys/kernel/ryzen_smu_drv/smu_args"

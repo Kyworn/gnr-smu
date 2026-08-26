@@ -6,9 +6,30 @@ Support for MP1 (Power) and RSMU (Tables) mailboxes.
 
 import subprocess
 import time
-import sys
 import argparse
+
 import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                "tools"))
+from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
+
+
+def guard(msg_id):
+    """Refuse the send, or return None. Both checks matter here and neither existed
+    before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
+    ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
+    addresses below are also this-part-specific — on another CPU they are just some
+    other register."""
+    ok, why = hardware_supported()
+    if not ok:
+        sys.exit(f"REFUSED: {why}")
+    blocked, reason = msg_id_blocked(msg_id)
+    if blocked:
+        sys.exit(f"REFUSED: {reason}")
+
+
 
 PCI_DEV  = "00:00.0"
 
@@ -37,6 +58,7 @@ def smn_write(addr, value):
     setpci(0xBC, value)
 
 def smu_send(mb_type, msg_id, arg0=0, timeout=1.0):
+    guard(msg_id)
     if mb_type == "mp1":
         m, r, a = MP1_MSG, MP1_RSP, MP1_ARG0
     else:
