@@ -19,6 +19,14 @@ CONFIG_PATH = os.path.join(
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hwgate import hardware_supported  # noqa: E402
 
+# MP1 message IDs. Corrected 2026-08-26: the GUI had 0x3D as TDC and 0x3C as EDC,
+# with an emphatic comment on each line and no measurement behind either. Settled by
+# read-back in research/probe_tdc_edc.py — write a value, see which PM-table limit
+# moves: 0x3D moved d[63] (EDC), 0x3C moved d[8] (TDC). The dialog was therefore
+# sending the TDC box to EDC and the EDC box to TDC, and an EDC of 180 A landed on a
+# TDC whose stock limit is 120 A.
+MSG_PPT, MSG_TDC, MSG_EDC = 0x3E, 0x3C, 0x3D
+
 # --- Color Theme ---
 BG_MAIN = "#121826"
 BG_PANEL = "#1a2332"
@@ -633,9 +641,9 @@ class GNRMaster(QMainWindow):
             self.current_ppt = dlg.inputs["PPT"].value()
             self.current_tdc = dlg.inputs["TDC"].value()
             self.current_edc = dlg.inputs["EDC"].value()
-            self.send_smu_cmd(0x3E, int(self.current_ppt * 1000))
-            self.send_smu_cmd(0x3D, int(self.current_tdc * 1000))  # 0x3D = TDC!
-            self.send_smu_cmd(0x3C, int(self.current_edc * 1000))  # 0x3C = EDC!
+            self.send_smu_cmd(MSG_PPT, int(self.current_ppt * 1000))
+            self.send_smu_cmd(MSG_TDC, int(self.current_tdc * 1000))
+            self.send_smu_cmd(MSG_EDC, int(self.current_edc * 1000))
 
     def open_core_control(self):
         dlg = CoreControlDialog(self.current_co, self)

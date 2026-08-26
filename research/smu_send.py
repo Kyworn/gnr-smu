@@ -14,10 +14,17 @@ RSP_ADDR = 0x3B1057C
 ARG0_ADDR = 0x3B109C4
 ARG1_ADDR = 0x3B109C8
 
-# Valeurs par défaut estimées pour le 9800X3D
+# Stock 9800X3D, read back from the PM table limits d[2]/d[8]/d[63]. These were 160 A
+# and 220 A, which are PBO figures, not stock — "reset" raised TDC and EDC instead of
+# restoring them. Same class of bug as the one tools/gnr_master.py had.
 DEFAULT_PPT_W = 162
-DEFAULT_TDC_A = 160
-DEFAULT_EDC_A = 220
+DEFAULT_TDC_A = 120
+DEFAULT_EDC_A = 180
+
+# 0x3C is TDC and 0x3D is EDC, confirmed by read-back in research/probe_tdc_edc.py.
+# This file already had them this way round while the GUI and CLI had them reversed;
+# the measurement is what settles it, not the majority.
+MSG_PPT, MSG_TDC, MSG_EDC = 0x3E, 0x3C, 0x3D
 
 
 def setpci(offset: int, value: int | None = None) -> int | None:
@@ -73,9 +80,6 @@ def main():
     p = sub.add_parser("edc")
     p.add_argument("amps", type=float)
 
-    p = sub.add_parser("tjmax")
-    p.add_argument("temp", type=float)
-
     p = sub.add_parser("send")
     p.add_argument("msg_id", type=lambda x: int(x, 0))
     p.add_argument("arg0",   type=lambda x: int(x, 0), nargs="?", default=0)
@@ -95,14 +99,22 @@ def main():
         print(f"MSG=0x{args.msg_id:02X} ARG0=0x{args.arg0:08X} → RSP=0x{rsp:02X} R0=0x{r0:08X} R1=0x{r1:08X}")
 
     elif args.cmd == "reset":
-        smu_send(0x3E, DEFAULT_PPT_W * 1000)
-        smu_send(0x3C, DEFAULT_TDC_A * 1000)
-        smu_send(0x3D, DEFAULT_EDC_A * 1000)
+        smu_send(MSG_PPT, DEFAULT_PPT_W * 1000)
+        smu_send(MSG_TDC, DEFAULT_TDC_A * 1000)
+        smu_send(MSG_EDC, DEFAULT_EDC_A * 1000)
         print("Reset OK")
 
     elif args.cmd == "ppt":
-        rsp, r0, r1 = smu_send(0x3E, int(args.watts * 1000))
+        rsp, r0, r1 = smu_send(MSG_PPT, int(args.watts * 1000))
         print(f"PPT {args.watts}W: RSP=0x{rsp:02X}")
+
+    elif args.cmd == "tdc":
+        rsp, r0, r1 = smu_send(MSG_TDC, int(args.amps * 1000))
+        print(f"TDC {args.amps}A: RSP=0x{rsp:02X}")
+
+    elif args.cmd == "edc":
+        rsp, r0, r1 = smu_send(MSG_EDC, int(args.amps * 1000))
+        print(f"EDC {args.amps}A: RSP=0x{rsp:02X}")
 
 if __name__ == "__main__":
     main()

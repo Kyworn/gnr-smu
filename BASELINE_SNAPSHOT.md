@@ -151,12 +151,19 @@ Les adresses SMN SVI3 classiques (0xE0080, 0xE00A0) retournent 0xFFFFFFFF → pa
 | 0x0B | 0xFF  | 0x00 | Unknown Error |
 | 0x0C | 0x01 ✓ | 0x00 | ? (GetPMTableVersion ?) |
 | 0x0D | 0x01 ✓ | **0x20444D41 = "AMD "** | Signature ? |
-| 0x3C | 0x01 ✓ | — | SetEDCLimit (mA) |
-| 0x3D | 0x01 ✓ | — | SetTDCLimit (mA) |
+| 0x3C | 0x01 ✓ | — | SetTDCLimit (mA) — corrected 2026-08-26, see below |
+| 0x3D | 0x01 ✓ | — | SetEDCLimit (mA) — corrected 2026-08-26, see below |
 | 0x3E | 0x01 ✓ | — | SetPPTLimit (mW) |
 | 0x3F | 0x01 ✓ | — | SetTjMax (°C) |
 | 0x4F | 0x01 ✓ | — | SetSustainedPwrLimit (mW) |
 | 0x5F | 0x01 ✓ | — | SetSlowPPTLimit (mW) |
+
+**⚠ The `✓` column only means the SMU returned `RSP=0x01`.** That is "message accepted",
+not "the field is what this row says". 0x3C and 0x3D were labelled from that column alone
+and were the wrong way round for it: `research/probe_tdc_edc.py` writes a distinctive
+value and reads back which PM-table limit moved, and finds `0x3C` moves `d[8]` (TDC)
+while `0x3D` moves `d[63]` (EDC). Every other `?` and guessed name in this table rests on
+the same weak evidence and should be read as untested.
 
 ## Turbostat (idle système, Brave actif ~73% CPU)
 
@@ -182,22 +189,26 @@ Raw = 0x104004189 — **registre sticky** (historique depuis boot) :
 
 ```bash
 # Restore limites BIOS estimées
-sudo python3 ~/gnr-smu/smu_send.py reset
-# = PPT 162W + TDC 160A + EDC 220A
+sudo python3 ~/gnr-smu/research/smu_send.py reset
+# = PPT 162W + TDC 120A + EDC 180A (stock; 160/220 are PBO figures, not a reset)
 
 # Si CPU reste à 606 MHz après reset → reboot (tout est 100% volatile)
 sudo reboot
 ```
 
-## Valeurs BIOS par défaut (estimées)
+## Valeurs BIOS par défaut
 
-| Limite | Valeur | Base de calcul |
-|--------|--------|----------------|
-| PPT | ~162W | 1.35 × TDP 120W |
-| TDC | 85A | (Observed Stock BIOS. PBO uncaps to ~160A) |
-| EDC | 120A | (Observed Stock BIOS. PBO uncaps to ~220A) |
-| TjMax | 85°C | Manual PBO config |
-| SlowPPT | ~88W | ~0.55 × PPT (typical STAPM) |
+Corrigé 2026-08-26 : la table ci-dessous était estimée et fausse sur trois lignes. Les
+trois limites et le TjMax se lisent directement dans la PM table, aucune estimation
+nécessaire.
+
+| Limite | Valeur | Source |
+|--------|--------|--------|
+| PPT | 162 W | `d[2]`, = spec stock 9800X3D |
+| TDC | 120 A | `d[8]` (était noté 85 A) |
+| EDC | 180 A | `d[63]` (était noté 120 A) |
+| TjMax | 88 °C | `d[10]` (était noté 85 °C) |
+| SlowPPT | ~88W | estimé, ~0.55 × PPT (typical STAPM) — non vérifié |
 
 ⚠ These default values are **not readable** via mailbox (no known Get function).
 

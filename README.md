@@ -127,9 +127,10 @@ sudo python3 tools/dump_table_full.py      # all 457 floats, labelled from the m
 ```
 
 SMU control uses MP1 mailbox **message IDs** (not table offsets): `0x3E` PPT,
-`0x3D` TDC, `0x3C` EDC, `0x50`-`0x57` per-core Curve Optimizer as a signed 32-bit
-value. On Zen 5 the TDC and EDC IDs are the reverse of what Zen 4 documentation
-implies, which is why they are commented at every call site. Curve Optimizer is
+`0x3C` TDC, `0x3D` EDC, `0x50`-`0x57` per-core Curve Optimizer as a signed 32-bit
+value. This repo asserted the reverse until 2026-08-26, on the strength of a note that
+named no measurement; `research/probe_tdc_edc.py` settles it by writing a value and
+reading back which limit moved. Curve Optimizer is
 write-only — the SMU will not read the offsets back, so the tools cache them locally
 in `$XDG_CONFIG_HOME/gnr_master.json` to keep the display honest.
 

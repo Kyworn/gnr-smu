@@ -18,6 +18,20 @@ CONFIG_PATH = os.path.join(
 STOCK_PPT_W, STOCK_TDC_A, STOCK_EDC_A = 162, 120, 180
 CORES = 8
 
+# MP1 message IDs. Corrected 2026-08-26: this file had 0x3D as TDC and 0x3C as EDC,
+# on the strength of a "validated via fuzzing" note in docs/TOFIX.md that named no
+# script and recorded no number. research/probe_tdc_edc.py settles it by read-back —
+# write a distinctive value, see which limit in the PM table moves:
+#
+#   0x3E <- 151 W   moved PPT (d[2])     read-back method validated first
+#   0x3D <- 111 A   moved EDC (d[63])
+#   0x3C <- 111 A   moved TDC (d[8])
+#
+# So 0x3C is TDC and 0x3D is EDC, matching ZenStates-Core, not the note. The swap was
+# not merely cosmetic: "reset to stock" sent STOCK_EDC_A on 0x3C, which set TDC to
+# 180 A against a 120 A stock limit, and the EDC menu accepted up to 250 A of TDC.
+MSG_PPT, MSG_TDC, MSG_EDC = 0x3E, 0x3C, 0x3D
+
 # The GUI blocks these outright; the CLI never sends them, but it applies the same
 # rule so the two cannot drift. 0x10 and 0x03-0x0D are the dangerous MP1 IDs.
 BLOCKED = {0x10} | set(range(0x03, 0x0E))
@@ -93,14 +107,12 @@ def main():
             apply_cmd(0x3E, int(w * 1000))
     elif choice == '2':
         a = ask_limit("TDC", "Amps", 200)
-        # 0x3D is the real TDC limit on Granite Ridge
         if a is not None:
-            apply_cmd(0x3D, int(a * 1000))
+            apply_cmd(MSG_TDC, int(a * 1000))
     elif choice == '3':
         a = ask_limit("EDC", "Amps", 250)
-        # 0x3C is the real EDC limit on Granite Ridge
         if a is not None:
-            apply_cmd(0x3C, int(a * 1000))
+            apply_cmd(MSG_EDC, int(a * 1000))
     elif choice == '4':
         val = 0xFFFFFFE2 # -30 as 32-bit unsigned
         for i in range(CORES):
@@ -109,9 +121,9 @@ def main():
         print("CO -30 saved locally for the GUI!")
     elif choice == '5':
         # Reset to stock
-        apply_cmd(0x3E, STOCK_PPT_W * 1000)
-        apply_cmd(0x3D, STOCK_TDC_A * 1000)
-        apply_cmd(0x3C, STOCK_EDC_A * 1000)
+        apply_cmd(MSG_PPT, STOCK_PPT_W * 1000)
+        apply_cmd(MSG_TDC, STOCK_TDC_A * 1000)
+        apply_cmd(MSG_EDC, STOCK_EDC_A * 1000)
         save_co_config(0)
         for i in range(CORES): apply_cmd(0x50 + i, 0)
         print("Reset successful.")
