@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
 
 
-def guard(msg_id):
+def guard(msg_id, mailbox="mp1"):
     """Refuse the send, or return None. Both checks matter here and neither existed
     before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
@@ -25,7 +25,7 @@ def guard(msg_id):
     ok, why = hardware_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
-    blocked, reason = msg_id_blocked(msg_id)
+    blocked, reason = msg_id_blocked(msg_id, mailbox)
     if blocked:
         sys.exit(f"REFUSED: {reason}")
 
@@ -58,7 +58,9 @@ def smn_write(addr, value):
     setpci(0xBC, value)
 
 def smu_send(mb_type, msg_id, arg0=0, timeout=1.0):
-    guard(msg_id)
+    # The mailbox has to reach the guard: the never-send list is MP1's, and the
+    # pmtable path below rides RSMU 0x04/0x05, which collide with dangerous MP1 IDs.
+    guard(msg_id, mb_type)
     if mb_type == "mp1":
         m, r, a = MP1_MSG, MP1_RSP, MP1_ARG0
     else:

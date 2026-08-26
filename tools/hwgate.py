@@ -74,16 +74,30 @@ PROFILES = {
 # mapping stay wrong in one copy for months.
 #
 #   0x03-0x0D, 0x10   dangerous MP1 IDs (docs/FINDINGS.md)
-#   0x58-0x5D         freeze MP1 on this part: no response, recovery needs a reboot
-BLOCKED_MSG_IDS = {0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x5E))
+#   0x58-0x6F         freeze MP1 on this part: no response, recovery needs a reboot
+#
+# The freeze range is the one docs/FINDINGS.md actually tested. This list said
+# 0x58-0x5D for a while, which is narrower than the measurement for no stated reason
+# and left 0x5E-0x6F reachable from the research tools.
+BLOCKED_MP1_IDS = {0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x70))
+BLOCKED_MSG_IDS = BLOCKED_MP1_IDS  # old name, kept for callers
 
 
-def msg_id_blocked(msg_id):
-    """(blocked, reason). Reason is None when the ID is allowed."""
-    if 0x58 <= msg_id <= 0x5D:
+def msg_id_blocked(msg_id, mailbox="mp1"):
+    """(blocked, reason). Reason is None when the ID is allowed.
+
+    The mailbox matters. MP1 and RSMU are separate endpoints with separate ID
+    namespaces, so an MP1 never-send list says nothing about the RSMU ID that
+    happens to share its number: RSMU 0x04/0x05 are the ordinary read-the-PM-table
+    pair, while MP1 0x04/0x05 are on the dangerous list. Applying one list to the
+    other blocks a harmless read and would tell you nothing about a harmful write.
+    """
+    if mailbox != "mp1":
+        return False, None
+    if 0x58 <= msg_id <= 0x6F:
         return True, (f"MSG 0x{msg_id:02x} freezes MP1 on Granite Ridge — no response, "
                       "recovery needs a reboot")
-    if msg_id in BLOCKED_MSG_IDS:
+    if msg_id in BLOCKED_MP1_IDS:
         return True, f"MSG 0x{msg_id:02x} is on the never-send list"
     return False, None
 
@@ -259,15 +273,23 @@ if __name__ == "__main__":
         assert (prof.ppt_msg, prof.tdc_msg, prof.edc_msg) == (0x3E, 0x3C, 0x3D), \
             f"{prof.name}: power-limit message IDs must be PPT 0x3E, TDC 0x3C, EDC 0x3D"
 
-    for blocked_id in (0x03, 0x0D, 0x10, 0x58, 0x5D):
+    # 0x5E and 0x6F are in here because the self-test used to assert 0x5E was ALLOWED,
+    # while docs/FINDINGS.md records the whole 0x58-0x6F range freezing MP1.
+    for blocked_id in (0x03, 0x0D, 0x10, 0x58, 0x5D, 0x5E, 0x6F):
         assert msg_id_blocked(blocked_id)[0], f"0x{blocked_id:02x} must be blocked"
-    for allowed_id in (0x02, 0x0E, 0x3C, 0x3D, 0x3E, 0x50, 0x57, 0x5E):
+    for allowed_id in (0x02, 0x0E, 0x3C, 0x3D, 0x3E, 0x50, 0x57, 0x70):
         assert not msg_id_blocked(allowed_id)[0], f"0x{allowed_id:02x} must be allowed"
+
+    # A different mailbox is a different ID namespace: RSMU 0x04/0x05 read the PM
+    # table and must not inherit the MP1 list.
+    for rsmu_id in (0x04, 0x05, 0x3C, 0x5D):
+        assert not msg_id_blocked(rsmu_id, mailbox="rsmu")[0], \
+            f"RSMU 0x{rsmu_id:02x} must not be judged against the MP1 never-send list"
 
     profile, why = get_hardware_profile()
     print(f"{'SUPPORTED' if profile else 'REFUSED'}: {why}")
     print(f"this machine reports {_core_count()} physical cores")
-    print(f"never-send list: {len(BLOCKED_MSG_IDS)} message IDs")
+    print(f"never-send list: {len(BLOCKED_MP1_IDS)} MP1 message IDs")
     if profile:
         print(f"per-core temperatures: d[{profile.core_temp}.."
               f"{profile.core_temp + profile.cores - 1}]")

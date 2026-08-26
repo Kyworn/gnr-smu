@@ -170,8 +170,11 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   wrong number; writing a limit *derived* from a wrong field pushes it into the SMU.
   That has already happened here once — the thermal limit (88 °C) was read as TDC and
   pre-filled the write dialog as 88 A. Hence the hardware gate.
-- **Both front-ends block message IDs `0x03`-`0x0D` and `0x10`** outright, and that
-  should stay. `0x58`-`0x5D` freeze MP1 on this part; do not probe them.
+- **Every send path blocks message IDs `0x03`-`0x0D`, `0x10` and `0x58`-`0x6F`**
+  outright, and that should stay. The `0x58`-`0x6F` range freezes MP1 on this part —
+  no response, reboot to recover — and it is the range `docs/FINDINGS.md` actually
+  tested, so do not narrow it. The block is MP1-specific: RSMU is a separate mailbox
+  with its own ID namespace, and `0x04`/`0x05` there are the ordinary PM-table read.
 - Stock limits are 162 W PPT / 120 A TDC / 180 A EDC on the 9800X3D and 200 W /
   160 A / 225 A on the 9950X3D. The reset paths select the matching profile.
 - 3D V-Cache runs under a tighter thermal ceiling than the rest of the die. The

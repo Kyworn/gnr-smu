@@ -53,6 +53,14 @@ STOCK_PPT_W, STOCK_TDC_A, STOCK_EDC_A = 162, 120, 180
 PROBE_A = 111
 PROBE_PPT_W = 151
 
+# What this probe does and does not establish. The PPT control proves the write path
+# and the read-back path work end to end; it does not independently confirm that d[8]
+# and d[63] are TDC and EDC — that identification comes from PM_TABLE_MAP.md, where it
+# rests on the values matching stock spec exactly. What the probe adds is which
+# message ID drives which of those two fields, and for that a single disjoint,
+# reproduced-on-demand result is enough. It is one trial per ID: rerun it rather than
+# cite it if the answer ever matters again.
+
 I_PPT, I_TDC, I_EDC = 2, 8, 63
 
 SETTLE = 0.5
@@ -81,6 +89,12 @@ def probe(msg_id, arg0, label, unit, baseline):
     after = read_limits()
     moved = [name for name, b, a in zip(("PPT", "TDC", "EDC"), baseline, after)
              if abs(a - b) > 0.5]
+    # "It moved" is weaker than "it became what we asked for": a clamp, a concurrent
+    # writer or a slow update can all move a field without the write having landed.
+    # Only a field that reads back as the requested value counts as identified.
+    want = arg0 / 1000.0
+    landed = [name for name, a in zip(("PPT", "TDC", "EDC"), after)
+              if abs(a - want) < 0.5]
     print(f"  0x{msg_id:02X} <- {label}: RSP={rsp} "
           f"PPT {baseline[0]:.1f}->{after[0]:.1f} W  "
           f"TDC {baseline[1]:.1f}->{after[1]:.1f} A  "
@@ -92,7 +106,23 @@ def probe(msg_id, arg0, label, unit, baseline):
               "these three, or firmware clamped the value.")
     else:
         print(f"       moved: {', '.join(moved)}")
+    if moved and moved != landed:
+        print(f"       moved {moved} but read back as {want:g} only in {landed or 'nothing'}"
+              " — clamped or raced, not conclusive.")
+        return after, []
     return after, moved
+
+
+def restore_one(msg_id, moved, origin):
+    """Send msg_id back to the pre-run value of whichever limit it was shown to drive.
+
+    `moved` unresolved means we never learned what this ID does, so there is nothing
+    to put back through it — and guessing is how the crossed restore happened.
+    """
+    idx = {"PPT": 0, "TDC": 1, "EDC": 2}
+    if not moved or len(moved) != 1 or moved[0] not in idx:
+        return
+    send(msg_id, int(round(origin[idx[moved[0]]])) * 1000)
 
 
 def main():
@@ -105,10 +135,16 @@ def main():
         sys.exit(f"PM table {hex(ver)}: d[8]/d[63] are the 9800X3D offsets, and this "
                  f"probe writes SMU limits. Refusing.")
 
-    base = read_limits()
-    print(f"baseline: PPT {base[0]:.1f} W  TDC {base[1]:.1f} A  EDC {base[2]:.1f} A")
-    if abs(base[1] - STOCK_TDC_A) > 0.5 or abs(base[2] - STOCK_EDC_A) > 0.5:
-        print("  note: not at stock — the reset at the end restores stock, not this.")
+    origin = read_limits()
+    base = origin
+    print(f"baseline: PPT {origin[0]:.1f} W  TDC {origin[1]:.1f} A  EDC {origin[2]:.1f} A")
+    # The probe is only a reduction if it is below what is *currently* set. On an Eco
+    # or PBO machine the active limits are not stock, and the hardcoded stock figures
+    # would make this an increase.
+    if PROBE_A >= min(origin[1], origin[2]) or PROBE_PPT_W >= origin[0]:
+        sys.exit(f"probe values ({PROBE_PPT_W} W / {PROBE_A} A) are not below the active "
+                 f"limits ({origin[0]:.0f} W / {origin[1]:.0f} A / {origin[2]:.0f} A). "
+                 "This probe only ever lowers a limit. Refusing.")
 
     print(f"\nstep 0 — does the read-back work at all? PPT is not in dispute.")
     after, moved = probe(MSG_PPT, PROBE_PPT_W * 1000, f"{PROBE_PPT_W} W", "W", base)
@@ -122,35 +158,31 @@ def main():
     print("  read-back confirmed; PPT restored.")
 
     verdict = {}
-    for msg_id in (0x3D, 0x3C):
-        print(f"\nstep — 0x{msg_id:02X}")
-        after, moved = probe(msg_id, PROBE_A * 1000, f"{PROBE_A} A", "A", base)
-        verdict[msg_id] = moved
-        # Restore before testing the other ID, so the second result is read against a
-        # known baseline rather than against whatever the first one left behind.
-        send(0x3D, (STOCK_TDC_A if moved == ["TDC"] else STOCK_EDC_A) * 1000)
-        send(0x3C, (STOCK_EDC_A if moved == ["TDC"] else STOCK_TDC_A) * 1000)
+    try:
+        for msg_id in (0x3D, 0x3C):
+            print(f"\nstep — 0x{msg_id:02X}")
+            after, moved = probe(msg_id, PROBE_A * 1000, f"{PROBE_A} A", "A", base)
+            verdict[msg_id] = moved
+            # Restore only the ID just tested, to the value its own field had before
+            # the run. The previous version restored *both* IDs from this trial's
+            # result, which on the second trial wrote them crossed: 180 A into a
+            # 120 A TDC. Which field this ID drives is exactly what `moved` says.
+            restore_one(msg_id, moved, origin)
+            time.sleep(SETTLE)
+            base = read_limits()
+    finally:
+        # Ctrl-C, a short read or any exception above must not leave a limit lowered.
+        print("\n--- restoring ---")
+        send(MSG_PPT, int(round(origin[0])) * 1000)
+        for msg_id in (0x3D, 0x3C):
+            restore_one(msg_id, verdict.get(msg_id), origin)
         time.sleep(SETTLE)
-        base = read_limits()
-
-    print("\n--- restoring stock ---")
-    send(MSG_PPT, STOCK_PPT_W * 1000)
-    if verdict.get(0x3D) == ["TDC"]:
-        send(0x3D, STOCK_TDC_A * 1000)
-        send(0x3C, STOCK_EDC_A * 1000)
-    elif verdict.get(0x3C) == ["TDC"]:
-        send(0x3C, STOCK_TDC_A * 1000)
-        send(0x3D, STOCK_EDC_A * 1000)
-    else:
-        # Unresolved: send the lower stock value on both, which is the safe direction
-        # under either mapping.
-        send(0x3C, STOCK_TDC_A * 1000)
-        send(0x3D, STOCK_TDC_A * 1000)
-        print("  mapping unresolved — sent the lower stock value (TDC's) on both IDs. "
-              "Reboot to get the BIOS values back.")
-    time.sleep(SETTLE)
-    final = read_limits()
-    print(f"final: PPT {final[0]:.1f} W  TDC {final[1]:.1f} A  EDC {final[2]:.1f} A")
+        final = read_limits()
+        print(f"final: PPT {final[0]:.1f} W  TDC {final[1]:.1f} A  EDC {final[2]:.1f} A")
+        if any(abs(f - o) > 0.5 for f, o in zip(final, origin)):
+            print("  WARNING: did not read back at the values this run started from "
+                  f"({origin[0]:.1f} W / {origin[1]:.1f} A / {origin[2]:.1f} A). "
+                  "Reboot to get the BIOS limits back.")
 
     print("\n--- verdict ---")
     for msg_id, moved in verdict.items():

@@ -24,7 +24,8 @@ def guard(msg_id):
     ok, why = hardware_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
-    blocked, reason = msg_id_blocked(msg_id)
+    # MP1-only tool: the addresses below are the MP1 mailbox, so the MP1 list applies.
+    blocked, reason = msg_id_blocked(msg_id, "mp1")
     if blocked:
         sys.exit(f"REFUSED: {reason}")
 
