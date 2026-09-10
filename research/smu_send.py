@@ -12,41 +12,55 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools"))
-from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
+from hwgate import (get_hardware_profile, msg_id_blocked, payload_allowed,
+                    smu_writes_supported)  # noqa: E402
 
 
-def guard(msg_id):
+def guard(msg_id, arg0=None):
     """Refuse the send, or return None. Both checks matter here and neither existed
     before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
     addresses below are also this-part-specific — on another CPU they are just some
     other register."""
-    ok, why = hardware_supported()
+    ok, why = smu_writes_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
-    blocked, reason = msg_id_blocked(msg_id)
+    # MP1-only tool: the addresses below are the MP1 mailbox, so the MP1 list applies.
+    blocked, reason = msg_id_blocked(msg_id, "mp1")
     if blocked:
         sys.exit(f"REFUSED: {reason}")
+    if arg0 is not None:
+        p, _ = get_hardware_profile()
+        ok, why = payload_allowed(p, msg_id, arg0)
+        if not ok:
+            sys.exit(f"REFUSED: {why}")
 
 
 
 PCI_DEV  = "00:00.0"
-MSG_ADDR = 0x3B10530
-RSP_ADDR = 0x3B1057C
-ARG0_ADDR = 0x3B109C4
-ARG1_ADDR = 0x3B109C8
 
-# Stock 9800X3D, read back from the PM table limits d[2]/d[8]/d[63]. These were 160 A
-# and 220 A, which are PBO figures, not stock — "reset" raised TDC and EDC instead of
-# restoring them. Same class of bug as the one tools/gnr_master.py had.
-DEFAULT_PPT_W = 162
-DEFAULT_TDC_A = 120
-DEFAULT_EDC_A = 180
 
-# 0x3C is TDC and 0x3D is EDC, confirmed by read-back in research/probe_tdc_edc.py.
-# This file already had them this way round while the GUI and CLI had them reversed;
-# the measurement is what settles it, not the majority.
-MSG_PPT, MSG_TDC, MSG_EDC = 0x3E, 0x3C, 0x3D
+def mailbox_addrs():
+    """(MSG, RSP, ARG0, ARG1) for the MP1 mailbox on the running part.
+
+    These used to be module constants measured on the 9800X3D, guarded by a check
+    that accepts every supported part. They live on the profile now, so a CPU whose
+    addresses were never measured stops here instead of writing to whatever those
+    registers happen to be on it. ARG1 is ARG0 + 4 on every part seen so far.
+    """
+    profile, why = get_hardware_profile()
+    if profile is None or not profile.mp1_smn:
+        sys.exit(f"REFUSED: no measured raw MP1 mailbox address for this part "
+                 f"({why}). This tool writes SMN registers directly.")
+    msg, rsp, arg0 = profile.mp1_smn
+    return msg, rsp, arg0, arg0 + 4
+
+# Stock limits and the PPT/TDC/EDC message IDs both live on the profile in
+# tools/hwgate.py, and are deliberately not copied here. This file used to carry its
+# own pair of each: the limits said 160 A / 220 A, which are PBO figures, so "reset"
+# raised TDC and EDC instead of restoring them; the IDs happened to be right while the
+# GUI and CLI had them reversed, and nobody noticed the repo contradicting itself for
+# months. One copy, on the profile that also says which part it applies to.
 
 
 def setpci(offset: int, value: int | None = None) -> int | None:
@@ -72,7 +86,8 @@ def smn_write(addr: int, value: int):
 
 
 def smu_send(msg_id: int, arg0: int = 0, timeout: float = 1.0) -> tuple[int, int, int]:
-    guard(msg_id)
+    guard(msg_id, arg0)
+    MSG_ADDR, RSP_ADDR, ARG0_ADDR, ARG1_ADDR = mailbox_addrs()
     smn_write(RSP_ADDR, 0)
     smn_write(ARG0_ADDR, arg0)
     smn_write(MSG_ADDR, msg_id)
@@ -122,21 +137,26 @@ def main():
         print(f"MSG=0x{args.msg_id:02X} ARG0=0x{args.arg0:08X} → RSP=0x{rsp:02X} R0=0x{r0:08X} R1=0x{r1:08X}")
 
     elif args.cmd == "reset":
-        smu_send(MSG_PPT, DEFAULT_PPT_W * 1000)
-        smu_send(MSG_TDC, DEFAULT_TDC_A * 1000)
-        smu_send(MSG_EDC, DEFAULT_EDC_A * 1000)
-        print("Reset OK")
+        p, _ = get_hardware_profile()
+        smu_send(p.ppt_msg, p.stock_ppt * 1000)
+        smu_send(p.tdc_msg, p.stock_tdc * 1000)
+        smu_send(p.edc_msg, p.stock_edc * 1000)
+        print(f"Reset to {p.name} stock: {p.stock_ppt} W / {p.stock_tdc} A / "
+              f"{p.stock_edc} A")
 
     elif args.cmd == "ppt":
-        rsp, r0, r1 = smu_send(MSG_PPT, int(args.watts * 1000))
+        p, _ = get_hardware_profile()
+        rsp, r0, r1 = smu_send(p.ppt_msg, int(args.watts * 1000))
         print(f"PPT {args.watts}W: RSP=0x{rsp:02X}")
 
     elif args.cmd == "tdc":
-        rsp, r0, r1 = smu_send(MSG_TDC, int(args.amps * 1000))
+        p, _ = get_hardware_profile()
+        rsp, r0, r1 = smu_send(p.tdc_msg, int(args.amps * 1000))
         print(f"TDC {args.amps}A: RSP=0x{rsp:02X}")
 
     elif args.cmd == "edc":
-        rsp, r0, r1 = smu_send(MSG_EDC, int(args.amps * 1000))
+        p, _ = get_hardware_profile()
+        rsp, r0, r1 = smu_send(p.edc_msg, int(args.amps * 1000))
         print(f"EDC {args.amps}A: RSP=0x{rsp:02X}")
 
 if __name__ == "__main__":

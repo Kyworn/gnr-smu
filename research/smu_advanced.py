@@ -13,19 +13,20 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools"))
-from hwgate import hardware_supported, msg_id_blocked  # noqa: E402
+from hwgate import (get_hardware_profile, msg_id_blocked,
+                    smu_writes_supported)  # noqa: E402
 
 
-def guard(msg_id):
+def guard(msg_id, mailbox="mp1"):
     """Refuse the send, or return None. Both checks matter here and neither existed
     before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
     addresses below are also this-part-specific — on another CPU they are just some
     other register."""
-    ok, why = hardware_supported()
+    ok, why = smu_writes_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
-    blocked, reason = msg_id_blocked(msg_id)
+    blocked, reason = msg_id_blocked(msg_id, mailbox)
     if blocked:
         sys.exit(f"REFUSED: {reason}")
 
@@ -33,15 +34,21 @@ def guard(msg_id):
 
 PCI_DEV  = "00:00.0"
 
-# MP1 Mailbox (Power Limits)
-MP1_MSG  = 0x3B10530
-MP1_RSP  = 0x3B1057C
-MP1_ARG0 = 0x3B109C4
+def mailbox_addrs(mb_type):
+    """(MSG, RSP, ARG0) for one mailbox on the running part.
 
-# RSMU Mailbox (Tables / Telemetry)
-RSMU_MSG  = 0x3B10524
-RSMU_RSP  = 0x3B10570
-RSMU_ARG0 = 0x3B10A40
+    Measured on the 9800X3D and carried on its hardware profile. A part whose raw SMN
+    addresses were never measured has none, and this refuses rather than writing to
+    the same register numbers on silicon where they may mean something else.
+    """
+    profile, why = get_hardware_profile()
+    if profile is None:
+        sys.exit(f"REFUSED: {why}")
+    addrs = profile.mp1_smn if mb_type == "mp1" else profile.rsmu_smn
+    if not addrs:
+        sys.exit(f"REFUSED: no measured raw {mb_type.upper()} mailbox address for "
+                 f"{profile.name}. This tool writes SMN registers directly.")
+    return addrs
 
 def setpci(offset, value=None):
     if value is None:
@@ -58,11 +65,14 @@ def smn_write(addr, value):
     setpci(0xBC, value)
 
 def smu_send(mb_type, msg_id, arg0=0, timeout=1.0):
-    guard(msg_id)
-    if mb_type == "mp1":
-        m, r, a = MP1_MSG, MP1_RSP, MP1_ARG0
-    else:
-        m, r, a = RSMU_MSG, RSMU_RSP, RSMU_ARG0
+    # The mailbox has to reach the guard: the never-send list is MP1's, and the
+    # pmtable path below rides RSMU 0x04/0x05, which collide with dangerous MP1 IDs.
+    guard(msg_id, mb_type)
+    # Explicit, because the old `else` meant an unrecognised name silently selected
+    # RSMU — the same typo that would have slipped past the guard above.
+    if mb_type not in ("mp1", "rsmu"):
+        sys.exit(f"REFUSED: unknown mailbox {mb_type!r}")
+    m, r, a = mailbox_addrs(mb_type)
     
     smn_write(r, 0)
     smn_write(a, arg0)

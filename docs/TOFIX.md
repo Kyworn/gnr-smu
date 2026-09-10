@@ -18,7 +18,7 @@
 
 ## Open Research (Low Priority)
 
-- [ ] **IDs 0x58-0x5D** — Identify what these 6 sequential MSG IDs do after the 8 cores' Curve Optimizer arrays.
+- [ ] **IDs 0x58-0x6F** — Identify what these MSG IDs do after the 8 cores' Curve Optimizer arrays. Not by sending them: `docs/FINDINGS.md` records the whole range freezing MP1 on first write, and they are on the never-send list for that reason. This needs a firmware dump or another implementation to read, not a probe.
 - [ ] **HSMP** — Explore if the Host System Management Port (HSMP) ACPI interface provides cleaner standard data for power limits than the direct mailbox polling.
 - [ ] **Unidentified Floats** — Fully decode the remaining ~180 floats in the `0x724` telemetry block (e.g. C-state residencies).
 
