@@ -1,6 +1,38 @@
 # GNR-SMU
 
-Telemetry map and SMU control tools for AMD Granite Ridge (Zen 5) under Linux.
+Reverse-engineered AMD Ryzen SMU telemetry and control tools for Linux.
+
+GNR-SMU maps undocumented Ryzen PM tables using real hardware measurements,
+cross-validation against independent Linux sensors, reproducible research
+fixtures and fail-closed hardware profiles.
+
+Currently supported:
+- Ryzen 7 9800X3D / Granite Ridge — telemetry + validated SMU controls
+- Ryzen 9 9950X3D / Granite Ridge — telemetry + validated SMU controls
+- Ryzen 5 5600X / Vermeer — read-only telemetry
+
+### Mapping philosophy
+
+```text
+measured > documented > assumed
+```
+
+Every exposed field carries a confidence level:
+
+- **CONFIRMED** — real measurement plus a reliable independent reference
+  and/or very strong multi-axis behavioral validation.
+- **HIGH** — explicitly published for exactly this PM-table version in
+  credible technical evidence, with coherent hardware behavior, but no
+  independent measurement available.
+- **CANDIDATE** — plausible correlation, position or value, but insufficient
+  identification. Never displayed as telemetry.
+- **UNKNOWN** — not enough evidence. Left unmapped.
+
+External projects such as ZenStates-Core and `ryzen_smu` are used as
+technical evidence, never blindly copied: a shared family-level table counts
+as one source, not one confirmation per version. Unsupported layouts fail
+closed, because plausible-looking floats at wrong offsets are worse than
+missing telemetry.
 
 > [!NOTE]
 > **Project status and thanks.** Maintenance is currently slower than usual because
@@ -18,11 +50,23 @@ The 9950X3D profile includes all 16 per-core temperatures and a model-specific S
 command allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
 
 Read-only telemetry is also supported on the Ryzen 5 5600X / Vermeer
-(PM table `0x380905`, 372 floats): per-core temperature, power, voltage,
-frequency, effective frequency and C0/CC1/CC6 residency, with the fused-off
-SMU slots 2–3 mapped explicitly. No SMU write is validated there, so limits,
-Curve Optimizer and both control dialogs stay disabled; see
+(PM table `0x380905`, 1488 bytes / 372 floats, SMU firmware tested: 56.70.0).
+CONFIRMED via independent references or very strong multi-axis validation:
+per-core temperature, per-core frequency, effective frequency, C0/CC1/CC6
+residency, and socket/package power `d[1]` (cross-validated against AMD RAPL
+package accounting). HIGH confidence (explicitly published offsets with
+coherent values, not independently cross-validated, tooltip-marked in the
+GUI): per-core power and voltage, FCLK, UCLK, MCLK, VDDCR_SOC, CLDO_VDDP,
+CLDO_VDDG_IOD and CLDO_VDDG_CCD. The fused-core layout (SMU slots 2–3 off on
+the validated machine) is verified fail-closed at detection time rather than
+assumed universal. No SMU write is validated there, so limits, Curve
+Optimizer and both control dialogs stay disabled; see
 [`docs/VERMEER_5600X.md`](docs/VERMEER_5600X.md).
+
+Vermeer Tctl remains intentionally unmapped: a plausible Tctl candidate was
+rejected after a 351-second / 1746-sample transient comparison against
+k10temp showed inconsistent instantaneous behavior. Unknown fields remain
+unknown rather than being labelled from plausibility alone.
 
 On the 9950X3D, no PM-table block is currently established as live per-core
 frequency. The GUI uses Linux `cpufreq` for that value and keeps the mapped PM
@@ -69,12 +113,19 @@ repo contains the measured layouts and tools that select the correct profile.
   controls, a "Dashboard" page that matches its sidebar entry, and a frequency summary
   that reports the highest core clock instead of an average across all cores.
 
-## Wanted: a dump from any other Granite Ridge part
-
+## Wanted: Ryzen hardware dumps for validation
 
 This is the one thing that would move the project forward, and it takes about ten
-seconds. Any still-unmapped Zen 5 desktop chip — 9600X, 9700X, 9900X, 9950X, or a
-different PM-table version:
+seconds. Additional physical CPUs are useful for distinguishing model-specific
+mappings, PM-table-version-specific mappings, fused-core layouts, CCD topology
+and generation-wide layouts. Priority hardware, wanted for research/validation
+(not claimed as supported):
+
+```text
+Zen 3 / Vermeer: 5700X, 5800X, 5900X, 5950X, other 5600X samples
+Zen 4 / Raphael: 7600X, 7700X, 7900X, 7950X
+Zen 5 / Granite Ridge: 9600X, 9700X, 9900X, 9950X, other PM-table variants
+```
 
 ```bash
 sudo python3 tools/dump_table_full.py > my_dump.txt
@@ -85,7 +136,7 @@ unvalidated hardware on purpose: it drops the labels and prints raw values, whic
 exactly what is needed to compare layouts.
 
 [@tpoechtrager](https://github.com/tpoechtrager) sent the first one, from a 9950X3D —
-see [Credits](#credits). One more part still helps, particularly a non-X3D or a 12-core.
+see [Credits](#credits).
 
 Why it matters: a layout from one machine cannot distinguish "this is where AMD puts
 Tctl" from "this is where Tctl landed on my 9800X3D". The 9950X3D settles that for the
@@ -193,7 +244,7 @@ sudo python3 tools/dump_table_full.py      # complete table; labels where mapped
 ```
 
 SMU control uses profile-specific MP1 mailbox **message IDs** (not table offsets).
-Power limits are the same on both parts — `0x3E` PPT, `0x3C` TDC, `0x3D` EDC. This repo
+Power limits are the same on both Granite Ridge parts — `0x3E` PPT, `0x3C` TDC, `0x3D` EDC. This repo
 asserted `0x3D` TDC / `0x3C` EDC until 2026-08-26, on the strength of a note that named
 no measurement; `research/probe_tdc_edc.py` settles it by writing a value and reading
 back which limit moved.
@@ -220,13 +271,14 @@ confidence, read from `PM_TABLE_MAP.md` itself.
 ## Tests
 
 ```bash
-python3 -m unittest discover -s tests   # 21 tests: GNR map regression + Vermeer profile/fixtures
+python3 -m unittest discover -s tests
 python3 tools/hwgate.py                 # hardware-gate self-test (refuses on unvalidated HW)
 ```
 
-The Vermeer tests run against real snapshots in `tests/fixtures/vermeer/`
-(15 captures from the physical 5600X), so slot mapping, residency semantics
-and the write blockade are checked without needing the hardware present.
+The suite (40 tests) covers the Granite Ridge map regression, the Vermeer
+profile, real Vermeer PM-table fixtures and the SMU write blockade, so slot
+mapping, residency semantics and fail-closed behavior are checked without
+needing the hardware present.
 
 ## Requirements
 
