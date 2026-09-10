@@ -247,6 +247,12 @@ class GNRMaster(QMainWindow):
         self.log_msg(
             "Dashboard initialized. Listening to kernel logs...", "STATUS", ACCENT_GREEN
         )
+        if not smu_writes_supported()[0]:
+            self.log_msg(
+                f"Read-only profile ({self.profile_reason}): SMU writes and "
+                "SMU queries are not validated here — telemetry only.",
+                "STATUS", ACCENT_GREEN,
+            )
         if getattr(self, "_co_read_error", None):
             self.log_msg(
                 f"Curve Optimizer readback unavailable: {self._co_read_error}",
@@ -564,7 +570,8 @@ class GNRMaster(QMainWindow):
         core_power = self._add_sensor_group(power, "Core Powers")
         for core in range(self.core_count):
             self._add_sensor(core_power, f"core_power_{core}",
-                             f"Core {core} (CCD{core // 8 + 1})", "W")
+                             f"Core {core} (CCD{core // 8 + 1})", "W",
+                             self._block_tooltip("core_power"))
 
         clocks = self._add_sensor_group(None, "Clocks")
         for key, label in (("fclk", "Infinity Fabric Clock (FCLK)"),
@@ -576,6 +583,14 @@ class GNRMaster(QMainWindow):
             self._add_sensor(core_clocks, f"core_clock_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "MHz",
                              "Live frequency from Linux cpufreq on the 9950X3D")
+        if self.profile is not None and self.profile.core_eff_frequency is not None:
+            eff_clocks = self._add_sensor_group(clocks, "Core Effective Clocks")
+            for core in range(self.core_count):
+                self._add_sensor(
+                    eff_clocks, f"core_efffreq_{core}",
+                    f"Core {core} (CCD{core // 8 + 1})", "MHz",
+                    f"Sleep-aware effective frequency "
+                    f"d[{self.profile.lane(self.profile.core_eff_frequency, core)}].")
 
         voltages = self._add_sensor_group(None, "Voltages")
         for key, label in (("vcore_peak", "Vcore Peak"), ("vcore_avg", "Vcore Average"),
@@ -587,7 +602,8 @@ class GNRMaster(QMainWindow):
         core_voltages = self._add_sensor_group(voltages, "Core Voltages")
         for core in range(self.core_count):
             self._add_sensor(core_voltages, f"core_voltage_{core}",
-                             f"Core {core} (CCD{core // 8 + 1})", "V")
+                             f"Core {core} (CCD{core // 8 + 1})", "V",
+                             self._block_tooltip("core_voltage"))
 
         residency = self._add_sensor_group(None, "Core residency & FIT")
         ccd_summary = self._add_sensor_group(residency, "CCD residency summary")
@@ -633,13 +649,18 @@ class GNRMaster(QMainWindow):
             self._add_sensor(cc6_group, f"core_cc6_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "%",
                              current_color=ACCENT_PURPLE)
-        co_config = self._add_sensor_group(None, "Curve Optimizer · active SMU value")
-        for core in range(self.core_count):
-            self._add_sensor(
-                co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int",
-                "Active value read through RSMU GetDldoPsmMargin (0xD5) at startup "
-                "and before/after changes from this application.",
-            )
+        # The CO readback performs sysfs writes (smu_args/rsmu_cmd), so it is
+        # only built where SMU queries are validated.  On write-blocked
+        # profiles the group is absent rather than full of "--".
+        writes_ok, _ = smu_writes_supported()
+        if writes_ok:
+            co_config = self._add_sensor_group(None, "Curve Optimizer · active SMU value")
+            for core in range(self.core_count):
+                self._add_sensor(
+                    co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int",
+                    "Active value read through RSMU GetDldoPsmMargin (0xD5) at startup "
+                    "and before/after changes from this application.",
+                )
     def _format_sensor_value(self, value, unit):
         if value is None:
             return "--"
@@ -810,6 +831,10 @@ class GNRMaster(QMainWindow):
         super().closeEvent(event)
 
     def read_co_offsets(self):
+        if not smu_writes_supported()[0]:
+            # No RSMU query either: the readback path writes smu_args/rsmu_cmd.
+            self._co_read_error = None
+            return [None] * self.core_count
         try:
             offsets = read_curve_optimizer_offsets(self.profile)
             self._co_read_error = None
@@ -974,7 +999,13 @@ class GNRMaster(QMainWindow):
         # this feeds the write dialog's defaults, and handing a 9950X3D 162/120/180
         # because its table read failed is the kind of wrong default that gets
         # written back. Unvalidated hardware has no profile and so gets nothing.
+        # Profiles without mapped limits (Vermeer) also get nothing: the dialog
+        # refuses to open, so a wrong prefill can never reach the SMU.
         if not hardware_supported()[0] or self.profile is None:
+            return None
+        if (self.profile.gidx("ppt_limit") is None
+                or self.profile.gidx("tdc_limit") is None
+                or self.profile.gidx("edc_limit") is None):
             return None
         stock = (float(self.profile.stock_ppt), float(self.profile.stock_tdc),
                  float(self.profile.stock_edc))
@@ -982,18 +1013,20 @@ class GNRMaster(QMainWindow):
             with open("/sys/kernel/ryzen_smu_drv/pm_table", "rb") as f:
                 d = struct.unpack(f"<{self.profile.float_count}f",
                                   f.read(self.profile.table_size))
-            # PPT=d[2], TDC=d[8] (0x020), EDC=d[63] (0x0FC). Corrected 2026-07-30:
-            # this used to return d[10] as TDC — that offset is the thermal limit
-            # in °C (88), so the write dialog pre-filled TDC with 88 A and EDC
-            # with 120 A (the real TDC limit).
-            return d[2], d[8], d[63]
+            # PPT, TDC (0x020) and EDC (0x0FC) limits from the profile map.
+            # Corrected 2026-07-30: this used to return d[10] as TDC — that
+            # offset is the thermal limit in °C (88), so the write dialog
+            # pre-filled TDC with 88 A and EDC with 120 A (the real TDC limit).
+            return (d[self.profile.gidx("ppt_limit")],
+                    d[self.profile.gidx("tdc_limit")],
+                    d[self.profile.gidx("edc_limit")])
         except Exception:
             return stock
 
     def _core_frequency_mhz(self, table, core):
         """Use the PM-table frequency where mapped, otherwise Linux cpufreq."""
         if self.profile.core_frequency is not None:
-            return table[self.profile.core_frequency + core] * 1000
+            return table[self.profile.lane(self.profile.core_frequency, core)] * 1000
         if core >= len(self.core_cpu_ids):
             return None
         path = (f"/sys/devices/system/cpu/cpu{self.core_cpu_ids[core]}/"
@@ -1004,49 +1037,83 @@ class GNRMaster(QMainWindow):
         except (OSError, ValueError):
             return None
 
+    def _g(self, d, name):
+        """Global telemetry value by canonical map name, None when unmapped.
+
+        Unmapped sensors stay "--" in the tree: unsupported is shown as
+        missing, never filled from another part's offset.
+        """
+        idx = self.profile.gidx(name)
+        return d[idx] if idx is not None else None
+
+    def _block_tooltip(self, block):
+        """Confidence note for a per-core block; "" when confirmed."""
+        if self.profile is not None and self.profile.confidence(block) != "confirmed":
+            return ("High-confidence mapping (load response + canonical layout "
+                    "order), not independently cross-validated — see "
+                    "docs/VERMEER_5600X.md.")
+        return ""
+
+    @staticmethod
+    def _fmt_opt(value, fmt):
+        return fmt.format(value) if value is not None else "--"
+
     def _update_sensor_tree(self, d):
-        vcores = [d[self.profile.core_voltage + i] for i in range(self.core_count)]
-        self._set_sensor("tctl", d[11])
-        self._set_summary("cpu", f"{d[11]:.1f} °C")
-        self._set_sensor("ppt", d[3])
-        self._set_sensor("ppt_limit", d[2])
-        self._set_sensor("tdc", d[9])
-        self._set_sensor("tdc_limit", d[8])
-        self._set_sensor("edc_limit", d[63])
-        self._set_sensor("thermal_limit", d[10])
-        socket_power = d[26] if self.profile.pm_version == 0x620205 else d[20]
-        self._set_sensor("socket_power", socket_power)
+        vcores = self.profile.lane_values(d, self.profile.core_voltage)
+        tctl = self._g(d, "tctl")
+        self._set_sensor("tctl", tctl)
+        self._set_summary("cpu", f"{tctl:.1f} °C" if tctl is not None else "--")
+        ppt = self._g(d, "ppt_value")
+        ppt_limit = self._g(d, "ppt_limit")
+        tdc = self._g(d, "tdc_value")
+        tdc_limit = self._g(d, "tdc_limit")
+        edc_limit = self._g(d, "edc_limit")
+        self._set_sensor("ppt", ppt)
+        self._set_sensor("ppt_limit", ppt_limit)
+        self._set_sensor("tdc", tdc)
+        self._set_sensor("tdc_limit", tdc_limit)
+        self._set_sensor("edc_limit", edc_limit)
+        self._set_sensor("thermal_limit", self._g(d, "thm_limit"))
+        self._set_sensor("socket_power", self._g(d, "socket_power"))
         if self.profile.edc_value is not None:
             current_edc = d[self.profile.edc_value]
             self._set_sensor("edc", current_edc)
             self._set_summary(
                 "limits",
-                f"PPT {d[3]:.0f}/{d[2]:.0f} W · TDC {d[9]:.0f}/{d[8]:.0f} A · "
-                f"EDC {current_edc:.0f}/{d[63]:.0f} A",
+                f"PPT {self._fmt_opt(ppt, '{:.0f} W')}/"
+                f"{self._fmt_opt(ppt_limit, '{:.0f} W')} · "
+                f"TDC {self._fmt_opt(tdc, '{:.0f} A')}/"
+                f"{self._fmt_opt(tdc_limit, '{:.0f} A')} · "
+                f"EDC {current_edc:.0f}/"
+                f"{self._fmt_opt(edc_limit, '{:.0f} A')}",
             )
         else:
             self._set_summary(
                 "limits",
-                f"PPT {d[3]:.0f}/{d[2]:.0f} W · TDC {d[9]:.0f}/{d[8]:.0f} A · EDC {d[63]:.0f} A",
+                f"PPT {self._fmt_opt(ppt, '{:.0f} W')}/"
+                f"{self._fmt_opt(ppt_limit, '{:.0f} W')} · "
+                f"TDC {self._fmt_opt(tdc, '{:.0f} A')}/"
+                f"{self._fmt_opt(tdc_limit, '{:.0f} A')} · "
+                f"EDC {self._fmt_opt(edc_limit, '{:.0f} A')}",
             )
-        self._set_sensor("cpu_power", d[20])
-        self._set_sensor("core_power", sum(d[self.profile.core_power + i]
-                                            for i in range(self.core_count)))
-        self._set_sensor("soc_power", d[21])
-        self._set_sensor("vddio_power", d[22])
-        self._set_sensor("vdd18_power", d[23])
-        self._set_sensor("fclk", d[71])
-        self._set_sensor("uclk", d[75])
-        self._set_sensor("mclk", d[79])
+        self._set_sensor("cpu_power", self._g(d, "cpu_power"))
+        self._set_sensor("core_power", sum(
+            self.profile.lane_values(d, self.profile.core_power)))
+        self._set_sensor("soc_power", self._g(d, "soc_power"))
+        self._set_sensor("vddio_power", self._g(d, "vddio_power"))
+        self._set_sensor("vdd18_power", self._g(d, "vdd18_power"))
+        self._set_sensor("fclk", self._g(d, "fclk"))
+        self._set_sensor("uclk", self._g(d, "uclk"))
+        self._set_sensor("mclk", self._g(d, "mclk"))
         self._set_sensor("vcore_peak", max(vcores))
         self._set_sensor("vcore_avg", sum(vcores) / self.core_count)
-        self._set_sensor("vsoc", d[83])
-        self._set_sensor("vdd_misc", d[58])
-        self._set_sensor("vddg_iod", d[259])
-        self._set_sensor("vddg_ccd", d[261])
-        self._set_sensor("vddp", d[269])
-        self._set_sensor("vid", d[19])
-        self._set_sensor("vid_limit", d[18])
+        self._set_sensor("vsoc", self._g(d, "vsoc"))
+        self._set_sensor("vdd_misc", self._g(d, "vdd_misc"))
+        self._set_sensor("vddg_iod", self._g(d, "vddg_iod"))
+        self._set_sensor("vddg_ccd", self._g(d, "vddg_ccd"))
+        self._set_sensor("vddp", self._g(d, "vddp"))
+        self._set_sensor("vid", self._g(d, "vid"))
+        self._set_sensor("vid_limit", self._g(d, "vid_limit"))
 
         ccd_count = max(1, (self.core_count + 7) // 8)
         for ccd in range(ccd_count):
@@ -1057,10 +1124,13 @@ class GNRMaster(QMainWindow):
             )
             start = ccd * 8
             stop = min(self.core_count, start + 8)
-            cc6_values = [d[self.profile.core_cc6 + core] for core in range(start, stop)]
+            cc6_values = [d[self.profile.lane(self.profile.core_cc6, core)]
+                          for core in range(start, stop)]
             if self.profile.core_c0 is not None:
-                c0_values = [d[self.profile.core_c0 + core] for core in range(start, stop)]
-                cc1_values = [d[self.profile.core_cc1 + core] for core in range(start, stop)]
+                c0_values = [d[self.profile.lane(self.profile.core_c0, core)]
+                             for core in range(start, stop)]
+                cc1_values = [d[self.profile.lane(self.profile.core_cc1, core)]
+                              for core in range(start, stop)]
                 self._set_sensor(f"ccd_c0_{ccd}", sum(c0_values) / len(c0_values))
                 self._set_sensor(f"ccd_cc1_{ccd}", sum(cc1_values) / len(cc1_values))
             else:
@@ -1075,19 +1145,33 @@ class GNRMaster(QMainWindow):
             freq = self._core_frequency_mhz(d, core)
             if freq is not None:
                 frequencies.append(freq)
-            self._set_sensor(f"core_temp_{core}", d[self.profile.core_temp + core])
+            self._set_sensor(f"core_temp_{core}",
+                             d[self.profile.lane(self.profile.core_temp, core)])
             self._set_sensor(f"core_clock_{core}", freq)
-            self._set_sensor(f"core_power_{core}", d[self.profile.core_power + core])
-            self._set_sensor(f"core_voltage_{core}", d[self.profile.core_voltage + core])
+            if self.profile.core_eff_frequency is not None:
+                self._set_sensor(
+                    f"core_efffreq_{core}",
+                    d[self.profile.lane(self.profile.core_eff_frequency, core)]
+                    * 1000)
+            self._set_sensor(f"core_power_{core}",
+                             d[self.profile.lane(self.profile.core_power, core)])
+            self._set_sensor(f"core_voltage_{core}",
+                             d[self.profile.lane(self.profile.core_voltage, core)])
             if self.profile.core_fit is not None:
-                self._set_sensor(f"core_fit_{core}", d[self.profile.core_fit + core])
-            self._set_sensor(f"core_cc6_{core}", d[self.profile.core_cc6 + core])
+                self._set_sensor(f"core_fit_{core}",
+                                 d[self.profile.lane(self.profile.core_fit, core)])
+            self._set_sensor(f"core_cc6_{core}",
+                             d[self.profile.lane(self.profile.core_cc6, core)])
             self._set_sensor(f"co_{core}", self.current_co[core])
             if self.profile.core_c0 is not None:
-                self._set_sensor(f"core_c0_{core}", d[self.profile.core_c0 + core])
-                self._set_sensor(f"core_cc1_{core}", d[self.profile.core_cc1 + core])
+                self._set_sensor(f"core_c0_{core}",
+                                 d[self.profile.lane(self.profile.core_c0, core)])
+                self._set_sensor(f"core_cc1_{core}",
+                                 d[self.profile.lane(self.profile.core_cc1, core)])
             else:
-                self._set_sensor(f"core_c0_{core}", 100 - d[self.profile.core_cc6 + core])
+                self._set_sensor(f"core_c0_{core}",
+                                 100 - d[self.profile.lane(
+                                     self.profile.core_cc6, core)])
         if frequencies:
             self._set_summary("frequency", f"{max(frequencies):.0f} MHz")
         else:
@@ -1109,12 +1193,14 @@ class GNRMaster(QMainWindow):
                 data = f.read(self.profile.table_size)
                 if len(data) == self.profile.table_size:
                     d = struct.unpack(f"<{self.profile.float_count}f", data)
-                    # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected
-                    # 2026-07-30. d[8] is TDC (not EDC), d[10] is the thermal limit
-                    # in °C (not TDC in A), and EDC's limit lives at d[63].
-                    self.current_ppt = d[2]
-                    self.current_edc = d[63]
-                    self.current_tdc = d[8]
+                    # Limit snapshots feed the write dialogs; unmapped limits
+                    # stay None so the dialogs refuse to open with no defaults.
+                    ppt_idx = self.profile.gidx("ppt_limit")
+                    tdc_idx = self.profile.gidx("tdc_limit")
+                    edc_idx = self.profile.gidx("edc_limit")
+                    self.current_ppt = d[ppt_idx] if ppt_idx is not None else None
+                    self.current_tdc = d[tdc_idx] if tdc_idx is not None else None
+                    self.current_edc = d[edc_idx] if edc_idx is not None else None
                     self._update_sensor_tree(d)
 
         except FileNotFoundError:

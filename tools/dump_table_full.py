@@ -79,8 +79,12 @@ def main():
     if not map_labels_supported():
         print(f"# no full labelled map for this profile: {why}")
         if profile:
-            print(f"# validated per-core temperatures: d[{profile.core_temp}-"
-                  f"{profile.core_temp + profile.cores - 1}] (direct degrees C)")
+            # Slot-aware: on fused parts (Vermeer slots 2-3) the contiguous
+            # range would point at dead lanes, so list the real ones.
+            lanes = [profile.lane(profile.core_temp, c)
+                     for c in range(profile.cores)]
+            print(f"# validated per-core temperatures (direct degrees C): "
+                  f"{', '.join(f'd[{i}]' for i in lanes)}")
         print("# raw values otherwise — the 9800X3D PM_TABLE_MAP.md does not apply here.")
         print(f"# Please attach this dump and your CPU model to an issue.\n")
         for i, v in enumerate(floats):

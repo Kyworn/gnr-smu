@@ -82,9 +82,10 @@ def sample(profile, seconds, hwmon):
     return rows, sensors
 
 
-def lane_medians(rows, start, count):
-    return [statistics.median(row[start + core] for row in rows)
-            for core in range(count)]
+def lane_medians(rows, profile, start):
+    """Per-core medians (Linux-core order) for the block at `start`."""
+    return [statistics.median(row[profile.lane(start, core)] for row in rows)
+            for core in range(profile.cores)]
 
 
 def main():
@@ -122,20 +123,21 @@ def main():
             worker.terminate()
             worker.wait()
 
-        baseline = lane_medians(idle, profile.core_temp, profile.cores)
-        hot = lane_medians(loaded[-20:], profile.core_temp, profile.cores)
+        baseline = lane_medians(idle, profile, profile.core_temp)
+        hot = lane_medians(loaded[-20:], profile, profile.core_temp)
         delta = [b - a for a, b in zip(baseline, hot)]
-        hottest_lane = max(range(profile.cores), key=delta.__getitem__)
+        hottest_core = max(range(profile.cores), key=delta.__getitem__)
+        hottest_lane = profile.lane(profile.core_temp, hottest_core)
         sensor_text = ""
         if sensors and sensors[-1]:
             sensor_text = "; " + ", ".join(
                 f"{name}={statistics.median(s[name] for s in sensors[-20:]):.1f} °C"
                 for name in sensors[-1]
             )
-        ok = hottest_lane == core and delta[core] >= 5
+        ok = hottest_core == core and delta[core] >= 5
         print(f"{'PASS' if ok else 'FAIL'} core {core} on logical CPU "
               f"{cpu_for_core[core]}: lane {hottest_lane} rose most "
-              f"({delta[hottest_lane]:+.1f} °C), now {hot[hottest_lane]:.1f} °C"
+              f"({delta[hottest_core]:+.1f} °C), now {hot[hottest_core]:.1f} °C"
               f"{sensor_text}")
         failures += not ok
         time.sleep(3)

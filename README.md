@@ -17,6 +17,13 @@ Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
 The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
 command allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
 
+Read-only telemetry is also supported on the Ryzen 5 5600X / Vermeer
+(PM table `0x380905`, 372 floats): per-core temperature, power, voltage,
+frequency, effective frequency and C0/CC1/CC6 residency, with the fused-off
+SMU slots 2–3 mapped explicitly. No SMU write is validated there, so limits,
+Curve Optimizer and both control dialogs stay disabled; see
+[`docs/VERMEER_5600X.md`](docs/VERMEER_5600X.md).
+
 On the 9950X3D, no PM-table block is currently established as live per-core
 frequency. The GUI uses Linux `cpufreq` for that value and keeps the mapped PM
 blocks labelled as Power, FIT, Activity, C0, CC1 and CC6 instead of guessing.
@@ -209,6 +216,17 @@ mailbox tools.
 
 `dump_table_full.py` prints the whole table with each field's documented meaning and
 confidence, read from `PM_TABLE_MAP.md` itself.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests   # 21 tests: GNR map regression + Vermeer profile/fixtures
+python3 tools/hwgate.py                 # hardware-gate self-test (refuses on unvalidated HW)
+```
+
+The Vermeer tests run against real snapshots in `tests/fixtures/vermeer/`
+(15 captures from the physical 5600X), so slot mapping, residency semantics
+and the write blockade are checked without needing the hardware present.
 
 ## Requirements
 

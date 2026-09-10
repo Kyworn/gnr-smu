@@ -24,88 +24,127 @@ VERSION_PATH  = "/sys/kernel/ryzen_smu_drv/pm_table_version"
 JSON_OUTPUT   = "gnr_telemetry_dump.json"
 CSV_OUTPUT    = "gnr_telemetry.csv"
 
-# Key named fields: (column_name, float_index, unit).
+# Key named fields: (column_name, globals_map key, unit).  A key missing
+# from the profile's map is unsupported there and the column is omitted —
+# the exporter must never fill a column from another part's offset.
 COMMON_FIELDS = [
     ("timestamp",        None,  "s"),
     # Zone 0x000 is the Zen (LIMIT, VALUE) pair layout — corrected 2026-07-30.
     # d[8] is TDC (not EDC) and d[10] is the thermal limit in °C (not TDC in A).
-    ("ppt_limit",        2,     "W"),
-    ("ppt_value",        3,     "W"),    # total package power, incl. SoC/uncore
-    ("tdc_limit",        8,     "A"),
-    ("tdc_value",        9,     "A"),
-    ("thm_limit",        10,    "C"),
-    ("tctl",             11,    "C"),    # direct °C, matches k10temp Tctl
-    ("edc_limit",        63,    "A"),
+    ("ppt_limit",        "ppt_limit", "W"),
+    ("ppt_value",        "ppt_value", "W"),    # total package power, incl. SoC/uncore
+    ("tdc_limit",        "tdc_limit", "A"),
+    ("tdc_value",        "tdc_value", "A"),
+    ("thm_limit",        "thm_limit", "C"),
+    ("tctl",             "tctl",  "C"),    # direct °C, matches k10temp Tctl
+    ("edc_limit",        "edc_limit", "A"),
     ("vcore_peak",       None,  "V"),   # computed from the profile's core-voltage block
     ("vcore_avg",        None,  "V"),
-    ("fclk",             71,    "MHz"),
-    ("uclk",             75,    "MHz"),
-    ("mclk",             79,    "MHz"),
+    ("fclk",             "fclk",  "MHz"),
+    ("uclk",             "uclk",  "MHz"),
+    ("mclk",             "mclk",  "MHz"),
 ]
+
+# Version-specific extras.  Only the (column, key, unit) presentation lives
+# here; every numeric offset lives on the HardwareProfile so an unmapped key
+# is skipped instead of read from the wrong place.
+_EXTRA_9950X3D = [
+    ("fit_metric", "fit_metric", "metric"),
+    ("vid_limit", "vid_limit", "V"),
+    ("vid_live", "vid", "V"),
+    ("vddcr_cpu_power", "cpu_power", "W"),
+    ("vddcr_soc_power", "soc_power", "W"),
+    ("vddio_mem_power", "vddio_power", "W"),
+    ("vdd18_power", "vdd18_power", "W"),
+    ("socket_power", "socket_power", "W"),
+    ("vdd_misc", "vdd_misc", "V"),
+    ("vddcr_soc", "vsoc", "V"),
+    ("cldo_vddg_iod", "vddg_iod", "V"),
+    ("cldo_vddg_ccd", "vddg_ccd", "V"),
+    ("cldo_vddp", "vddp", "V"),
+]
+
+_EXTRA_9800X3D = [
+    ("hotspot_temp", "hotspot_temp", "C"),
+    ("pkg_power", "pkg_power", "W"),
+    ("soc_power", "soc_power", "W"),
+    ("soc_telemetry", "soc_telemetry", "metric"),
+    ("soc_telemetry_metric", "soc_telemetry_metric", "unit"),
+    ("igpu_power", "igpu_power", "W"),
+    ("igpu_clock", "igpu_clock", "MHz"),
+    ("slow_temp_0", "slow_temp_0", "C"),
+    ("slow_temp_1", "slow_temp_1", "C"),
+    ("pkg_energy", "pkg_energy", "J"),
+]
+
+
+def _resolve(profile, column, key, unit):
+    if key is None:
+        return (column, None, unit)
+    idx = profile.gidx(key)
+    if idx is None:
+        return None
+    return (column, idx, unit)
 
 
 def global_fields(profile):
     """Return only fields whose meaning is established for this table version."""
-    fields = list(COMMON_FIELDS)
+    fields = []
+    for column, key, unit in COMMON_FIELDS:
+        resolved = _resolve(profile, column, key, unit)
+        if resolved is not None:
+            fields.append(resolved)
     if profile.pm_version == 0x620205:
-        fields += [
-            ("fit_metric", 16, "metric"),
-            ("vid_limit", 18, "V"),
-            ("vid_live", 19, "V"),
-            ("vddcr_cpu_power", 20, "W"),
-            ("vddcr_soc_power", 21, "W"),
-            ("vddio_mem_power", 22, "W"),
-            ("vdd18_power", 23, "W"),
-            ("socket_power", 26, "W"),
-            ("vdd_misc", 58, "V"),
-            ("vddcr_soc", 83, "V"),
-            ("cldo_vddg_iod", 259, "V"),
-            ("cldo_vddg_ccd", 261, "V"),
-            ("cldo_vddp", 269, "V"),
-        ]
+        extras = _EXTRA_9950X3D
+    elif profile.pm_version == 0x620105:
+        extras = _EXTRA_9800X3D
     else:
-        fields += [
-            ("hotspot_temp", 270, "C"),
-            ("pkg_power", 20, "W"),
-            ("soc_power", 21, "W"),
-            ("soc_telemetry", 87, "metric"),
-            ("soc_telemetry_metric", 95, "unit"),
-            ("igpu_power", 107, "W"),
-            ("igpu_clock", 108, "MHz"),
-            ("slow_temp_0", 298, "C"),
-            ("slow_temp_1", 299, "C"),
-            ("pkg_energy", 212, "J"),
-        ]
+        extras = []
+    for column, key, unit in extras:
+        resolved = _resolve(profile, column, key, unit)
+        if resolved is not None:
+            fields.append(resolved)
     return fields
 
 
 def named_fields(profile):
     fields = global_fields(profile)
     for core in range(profile.cores):
-        fields.append((f"c{core}_power", profile.core_power + core, "W"))
-        fields.append((f"c{core}_voltage", profile.core_voltage + core, "V"))
-        fields.append((f"c{core}_temp", profile.core_temp + core, "C"))
+        fields.append((f"c{core}_power", profile.lane(profile.core_power, core), "W"))
+        fields.append((f"c{core}_voltage", profile.lane(profile.core_voltage, core), "V"))
+        fields.append((f"c{core}_temp", profile.lane(profile.core_temp, core), "C"))
         if profile.core_frequency is not None:
             fields.append(
-                (f"c{core}_frequency", profile.core_frequency + core, "GHz")
+                (f"c{core}_frequency", profile.lane(profile.core_frequency, core), "GHz")
+            )
+        if profile.core_eff_frequency is not None:
+            fields.append(
+                (f"c{core}_freq_eff",
+                 profile.lane(profile.core_eff_frequency, core), "GHz")
             )
         if profile.core_fit is not None:
-            fields.append((f"c{core}_fit", profile.core_fit + core, "metric"))
+            fields.append((f"c{core}_fit",
+                           profile.lane(profile.core_fit, core), "metric"))
         if profile.core_activity is not None:
             activity_name = (f"c{core}_activity_metric"
                              if profile.core_c0 is not None
                              else f"c{core}_light_cstate_metric")
             fields.append(
-                (activity_name, profile.core_activity + core, "metric")
+                (activity_name, profile.lane(profile.core_activity, core), "metric")
             )
         if profile.core_c0 is not None:
-            fields.append((f"c{core}_c0_residency", profile.core_c0 + core, "%"))
+            fields.append((f"c{core}_c0_residency",
+                           profile.lane(profile.core_c0, core), "%"))
         if profile.core_cc1 is not None:
-            fields.append((f"c{core}_cc1_residency", profile.core_cc1 + core, "%"))
-        fields.append((f"c{core}_cc6_residency", profile.core_cc6 + core, "%"))
-        boost_name = (f"c{core}_boost_limit" if profile.boost_limit_confident
-                      else f"c{core}_boost_limit_candidate")
-        fields.append((boost_name, profile.core_boost_limit + core, "GHz"))
+            fields.append((f"c{core}_cc1_residency",
+                           profile.lane(profile.core_cc1, core), "%"))
+        fields.append((f"c{core}_cc6_residency",
+                       profile.lane(profile.core_cc6, core), "%"))
+        if profile.core_boost_limit is not None:
+            boost_name = (f"c{core}_boost_limit" if profile.boost_limit_confident
+                          else f"c{core}_boost_limit_candidate")
+            fields.append((boost_name,
+                           profile.lane(profile.core_boost_limit, core), "GHz"))
     return fields
 
 
@@ -143,7 +182,7 @@ def get_floats(profile):
 def floats_to_row(d, ts, profile, fields=None):
     row = {}
     fields = fields or named_fields(profile)
-    vcores = [d[profile.core_voltage + i] for i in range(profile.cores)]
+    vcores = profile.lane_values(d, profile.core_voltage)
     for name, idx, _ in fields:
         if name == "timestamp":
             row[name] = f"{ts:.3f}"
@@ -189,7 +228,7 @@ def cmd_json():
             "table_size": profile.table_size,
             "float_count": profile.float_count,
             "notes": "Generated by GNR-SMU export tool",
-            "processor": f"Granite Ridge (Zen 5) — {profile.name}",
+            "processor": f"{profile.arch} — {profile.name}",
         },
         "snapshots": snapshots,
     }
@@ -221,9 +260,9 @@ def cmd_csv(live_interval=None):
                     writer.writerow(floats_to_row(d, time.time(), profile, fields))
                     f.flush()
                     n += 1
-                    pkg = d[3]
-                    max_temp = max(d[profile.core_temp + i]
-                                   for i in range(profile.cores))
+                    pkg = d[profile.gidx("ppt_value")] \
+                        if profile.gidx("ppt_value") is not None else float("nan")
+                    max_temp = max(profile.lane_values(d, profile.core_temp))
                     print(f"\r  [{n}] Pkg: {pkg:.1f}W  MaxTemp: {max_temp:.1f}°C", end="", flush=True)
                     time.sleep(live_interval)
             except KeyboardInterrupt:
@@ -235,7 +274,7 @@ def cmd_temps():
     d = get_floats(profile)
     print(f"Per-core temperatures — {profile.name}")
     for core in range(profile.cores):
-        print(f"Core {core:2}: {d[profile.core_temp + core]:5.1f} °C")
+        print(f"Core {core:2}: {profile.lane_values(d, profile.core_temp)[core]:5.1f} °C")
 
 
 def main():

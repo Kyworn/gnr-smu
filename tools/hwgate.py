@@ -12,6 +12,7 @@ from typing import Optional
 
 VERSION_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_version"
 SIZE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_size"
+PM_TABLE_PATH = "/sys/kernel/ryzen_smu_drv/pm_table"
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class HardwareProfile:
     core_c0: Optional[int]
     core_cc1: Optional[int]
     core_cc6: int
-    core_boost_limit: int
+    core_boost_limit: Optional[int]
     boost_limit_confident: bool
     # CCD-adjacent telemetry.  L3 temperature lanes are exposed only after a
     # cache-thrash-vs-ALU comparison demonstrates cache-specific coupling.
@@ -71,14 +72,127 @@ class HardwareProfile:
     # the read-only RSMU GetDldoPsmMargin command.  This is separate from the
     # profile-specific MP1 write path above.
     co_get_msg: int = 0
+    # No SMU command of any kind is validated on a profile with this False:
+    # neither MP1 writes nor the conceptually-read-only RSMU queries (the
+    # query protocol writes smu_args/rsmu_cmd first).  A read-only query and
+    # a write are different capabilities; a future revision may split this
+    # into allow_smu_writes / allow_rsmu_queries, but today both stay False
+    # together and no new logic should assume one implies the other.
     allow_smu_writes: bool = False
     ccd_shared_temperature: Optional[int] = None
     edc_value: Optional[int] = None
+    # Per-core blocks are 8-wide SMU slots on every part measured so far, but
+    # the active cores are not always slots 0..N-1: the 5600X fuses off slots
+    # 2-3, so Linux core 2 lives in SMU slot 4.  `core_slots` maps Linux core
+    # index -> SMU slot; empty means the identity mapping (all Granite Ridge
+    # parts).  Every `base + core` site must go through slot()/lane() instead.
+    core_slots: tuple = ()
+    # Effective (sleep-aware) per-core frequency block base, or None when not
+    # mapped.  Granite Ridge has no such block; Vermeer 0x380905 has d[220].
+    core_eff_frequency: Optional[int] = None
+    # Global (non-per-core) telemetry: ((canonical_name, float_index), ...).
+    # A name absent from the map is unsupported on that profile and every
+    # front-end must hide it rather than read another part's offset.  This
+    # replaces the old pm_version branches scattered across the tools.
+    globals_map: tuple = ()
+    # Blocks whose identification is HIGH (load-response + canonical layout
+    # order) but not independently cross-validated against another sensor.
+    # Front-ends must present these as high-confidence, not confirmed.
+    # Named by HardwareProfile field, e.g. "core_power".
+    provisional_blocks: tuple = ()
+    # Display family, e.g. "Granite Ridge (Zen 5)" / "Vermeer (Zen 3)".
+    arch: str = "Granite Ridge (Zen 5)"
 
     @property
     def float_count(self):
         return self.table_size // 4
 
+    def slot(self, core):
+        """SMU slot for a Linux physical-core index."""
+        if not 0 <= core < self.cores:
+            raise ValueError(f"core {core} outside 0..{self.cores - 1}")
+        if self.core_slots:
+            if len(self.core_slots) != self.cores:
+                raise ValueError(
+                    f"{self.name}: {len(self.core_slots)} slots for "
+                    f"{self.cores} cores")
+            return self.core_slots[core]
+        return core
+
+    def lane(self, base, core):
+        """Float index of `core`'s lane in the per-core block at `base`."""
+        if base is None:
+            raise ValueError(f"{self.name}: block is not mapped for this profile")
+        return base + self.slot(core)
+
+    def lane_values(self, values, base):
+        """Per-core values (Linux-core order) from the block at `base`."""
+        if base is None:
+            raise ValueError(f"{self.name}: block is not mapped for this profile")
+        return [values[base + self.slot(core)] for core in range(self.cores)]
+
+    def gidx(self, name):
+        """Float index of a global telemetry name, or None when unmapped."""
+        for key, idx in self.globals_map:
+            if key == name:
+                return idx
+        return None
+
+    def confidence(self, block):
+        """'confirmed' or 'high' for a per-core block field name."""
+        return "high" if block in self.provisional_blocks else "confirmed"
+
+    def fused_slots(self):
+        """SMU slots with no Linux core on them (empty when identity-mapped)."""
+        if not self.core_slots:
+            return ()
+        width = max(self.core_slots) + 1
+        return tuple(s for s in range(width) if s not in self.core_slots)
+
+
+# Every canonical global-telemetry name a front-end may request.  A profile
+# map key outside this set is a typo, not an unsupported field; a front-end
+# request outside it would silently become "--".  validate_profile_globals()
+# (run by the self-test and the unit tests) tells the two apart.
+GLOBAL_FIELD_NAMES = frozenset({
+    "ppt_limit", "ppt_value",
+    "tdc_limit", "tdc_value",
+    "thm_limit", "tctl",
+    "edc_limit",
+    "fclk", "uclk", "mclk",
+    "vid_limit", "vid",
+    "vdd_misc", "vsoc",
+    "vddg_iod", "vddg_ccd", "vddp",
+    "socket_power", "cpu_power", "pkg_power",
+    "soc_power", "vddio_power", "vdd18_power",
+    "hotspot_temp",
+    "soc_telemetry", "soc_telemetry_metric",
+    "igpu_power", "igpu_clock",
+    "slow_temp_0", "slow_temp_1",
+    "pkg_energy",
+    "fit_metric",
+})
+
+
+def validate_profile_globals(profile):
+    """Return globals_map keys that are not canonical names (typos)."""
+    return [key for key, _ in profile.globals_map
+            if key not in GLOBAL_FIELD_NAMES]
+
+
+# Global telemetry shared by both Granite Ridge parts (zone 0x000 pairs,
+# clocks, rails).  Kept as data so the front-ends need no pm_version branch.
+_GNR_COMMON_GLOBALS = (
+    ("ppt_limit", 2), ("ppt_value", 3),
+    ("tdc_limit", 8), ("tdc_value", 9),
+    ("thm_limit", 10), ("tctl", 11),
+    ("edc_limit", 63),
+    ("fclk", 71), ("uclk", 75), ("mclk", 79),
+    ("vid_limit", 18), ("vid", 19),
+    ("vdd_misc", 58),
+    ("vsoc", 83),
+    ("vddg_iod", 259), ("vddg_ccd", 261), ("vddp", 269),
+)
 
 PROFILES = {
     (0x620105, 1828, 8): HardwareProfile(
@@ -101,6 +215,15 @@ PROFILES = {
         co_mode="legacy_per_message",
         co_get_msg=0xD5,
         allow_smu_writes=True,
+        globals_map=_GNR_COMMON_GLOBALS + (
+            ("socket_power", 20), ("cpu_power", 20), ("pkg_power", 20),
+            ("soc_power", 21), ("vddio_power", 22), ("vdd18_power", 23),
+            ("hotspot_temp", 270),
+            ("soc_telemetry", 87), ("soc_telemetry_metric", 95),
+            ("igpu_power", 107), ("igpu_clock", 108),
+            ("slow_temp_0", 298), ("slow_temp_1", 299),
+            ("pkg_energy", 212),
+        ),
     ),
     (0x620205, 2452, 16): HardwareProfile(
         "AMD Ryzen 9 9950X3D", "AMD Ryzen 9 9950X3D", 0x620205, 2452, 16,
@@ -150,11 +273,50 @@ PROFILES = {
         co_mode="packed_core_mask", co_msg=0x35,
         co_get_msg=0xD5,
         allow_smu_writes=True,
+        globals_map=_GNR_COMMON_GLOBALS + (
+            ("fit_metric", 16),
+            ("cpu_power", 20), ("soc_power", 21),
+            ("vddio_power", 22), ("vdd18_power", 23),
+            ("socket_power", 26),
+        ),
         # d[64] sits right after EDC_LIMIT (d[63]) and behaves like the
         # missing EDC_VALUE: idle ~7 A, rises to ~128 A under all-core load,
         # and stays above the same run's TDC current (d[9], ~108 A) as a
         # real peak-current reading should (research/recheck_edc.py).
         edc_value=64,
+    ),
+    # AMD Ryzen 5 5600X / Vermeer (Zen 3).  Read-only: no SMU command is
+    # validated on this part, so every write path stays blocked (see
+    # docs/VERMEER_5600X.md for the evidence behind each mapped block).
+    #
+    # Per-core blocks are 8 SMU slots wide with slots 2-3 fused off on the
+    # validated machine, hence core_slots=(0, 1, 4, 5, 6, 7): Linux core 2
+    # lives in SMU slot 4.  Which cores a 5600X fuses off depends on binning,
+    # so the tuple is verified against the live table at detection time
+    # (_fused_layout_matches) and any other layout refuses the profile.
+    # The fused slots read 0.0 everywhere except CC6, where they read 100.0.
+    # That looks like the firmware representation for inactive/non-present
+    # core slots; it is not interpreted as a sleeping physical core.
+    (0x380905, 1488, 6): HardwareProfile(
+        "AMD Ryzen 5 5600X", "AMD Ryzen 5 5600X", 0x380905, 1488, 6,
+        core_power=172, core_voltage=180, core_temp=188, core_frequency=212,
+        core_fit=None, core_activity=None, core_c0=228, core_cc1=236,
+        core_cc6=244, core_boost_limit=None, boost_limit_confident=False,
+        ccd_power_candidate=None, ccd_vddm_candidate=None,
+        ccd_l3_temperature=None, ccd_candidate_count=0,
+        # No validated message IDs on Vermeer: 0 keeps the allowlist empty
+        # (smu_message_supported() additionally refuses write-blocked
+        # profiles outright).
+        ppt_msg=0, tdc_msg=0, edc_msg=0,
+        stock_ppt=0, stock_tdc=0, stock_edc=0,
+        co_mode="unsupported",
+        co_get_msg=0,
+        allow_smu_writes=False,
+        core_slots=(0, 1, 4, 5, 6, 7),
+        core_eff_frequency=220,
+        provisional_blocks=("core_power", "core_voltage"),
+        globals_map=(),
+        arch="Vermeer (Zen 3)",
     ),
 }
 
@@ -254,6 +416,44 @@ def _cpu_model(cpuinfo="/proc/cpuinfo"):
     return ""
 
 
+def _fused_layout_matches(profile, pm_path=None):
+    """Check the profile's fused-slot layout against the live PM table.
+
+    The 5600X tuple was measured on one physical CPU, and which CCD cores a
+    5600X fuses off depends on binning (down-binned dies, even dual-CCD
+    SKUs exist) — it is not guaranteed identical on every chip.  Rather
+    than trust the tuple blindly, verify it against read-only data: in the
+    per-core frequency block the fused slots read exactly 0.0 on the
+    validated machine while every mapped slot reads a real frequency.
+    Anything else means a different layout, and the profile refuses instead
+    of mislabelling cores.  Fails closed in both directions.
+    """
+    if pm_path is None:
+        pm_path = PM_TABLE_PATH
+    try:
+        with open(pm_path, "rb") as f:
+            data = f.read(profile.table_size)
+        if len(data) != profile.table_size:
+            return False, (f"{profile.name}: cannot validate the fused-core "
+                           f"layout (short PM-table read)")
+        values = struct.unpack(f"<{profile.float_count}f", data)
+    except Exception as e:
+        return False, (f"{profile.name}: cannot validate the fused-core "
+                       f"layout ({e})")
+    base = profile.core_frequency
+    bad = [s for s in profile.fused_slots() if values[base + s] != 0.0]
+    dead = [c for c in range(profile.cores)
+            if values[base + profile.slot(c)] == 0.0]
+    if bad or dead:
+        return False, (
+            f"{profile.name}: PM-table fused-core layout differs from the "
+            f"validated machine "
+            f"(slots unexpectedly live: {bad}, mapped lanes reading 0.0: "
+            f"{[profile.slot(c) for c in dead]}); refusing instead of "
+            f"mislabelling cores")
+    return True, ""
+
+
 def get_hardware_profile():
     """Return ``(profile_or_none, reason)``; cached for the process lifetime."""
     global _cached
@@ -271,6 +471,13 @@ def get_hardware_profile():
     cpu_model = _cpu_model()
     if profile is not None and profile.cpu_model not in cpu_model:
         profile = None
+    if profile is not None and profile.core_slots:
+        # One machine's fused-off slots are not every machine's: verify the
+        # layout against the live table before trusting the tuple.
+        ok, slot_why = _fused_layout_matches(profile)
+        if not ok:
+            _cached = (None, slot_why)
+            return _cached
     if profile is None:
         _cached = (
             None,
@@ -303,6 +510,10 @@ def smu_writes_supported():
 
 def smu_message_supported(profile, msg_id):
     """Only allow message IDs explicitly present in the selected profile."""
+    if not profile.allow_smu_writes:
+        # Defense in depth: the callers check smu_writes_supported() first,
+        # but a profile with no validated command must never allowlist one.
+        return False
     allowed = {profile.ppt_msg, profile.tdc_msg, profile.edc_msg}
     if profile.co_mode == "legacy_per_message":
         allowed.update(range(0x50, 0x50 + profile.cores))
@@ -353,7 +564,8 @@ def curve_optimizer_command(profile, core, margin):
         # Zen 3+: [31:28] CCD, [23:20] core-within-CCD, [15:0] signed margin.
         core_mask = (core // 8) << 28 | (core % 8) << 20
         return profile.co_msg, core_mask | (margin & 0xFFFF)
-    raise ValueError(f"unsupported CO command mode: {profile.co_mode}")
+    raise ValueError(f"unsupported CO command mode: {profile.co_mode} "
+                     f"(no Curve Optimizer write is mapped for {profile.name})")
 
 
 def curve_optimizer_read_command(profile, core):
@@ -380,7 +592,12 @@ def read_curve_optimizer_offsets(profile, sysfs_base="/sys/kernel/ryzen_smu_drv"
     Although the operation is read-only at the firmware level, the ryzen_smu
     protocol writes the query argument and command ID to sysfs first, so this
     normally requires root. Any rejected/truncated response fails closed.
+    Profiles without validated SMU commands are refused outright: even a
+    conceptually read-only query performs a sysfs write on this path.
     """
+    if not profile.allow_smu_writes:
+        raise RuntimeError(
+            f"SMU queries are not validated on {profile.name}")
     args_path = f"{sysfs_base}/smu_args"
     cmd_path = f"{sysfs_base}/rsmu_cmd"
     offsets = []
@@ -460,6 +677,8 @@ if __name__ == "__main__":
     # backwards writes the TDC box into EDC. It was wrong here once; assert it rather
     # than trust the next person editing the table above.
     for key, prof in PROFILES.items():
+        if not prof.allow_smu_writes:
+            continue
         assert (prof.ppt_msg, prof.tdc_msg, prof.edc_msg) == (0x3E, 0x3C, 0x3D), \
             f"{prof.name}: power-limit message IDs must be PPT 0x3E, TDC 0x3C, EDC 0x3D"
 
@@ -486,6 +705,59 @@ if __name__ == "__main__":
         "9800X3D must expose the three measured C-state blocks directly"
     assert probe_profile.core_fit is None and probe_profile.core_activity is None, \
         "9800X3D C-state lanes must not also be presented as FIT/activity"
+    # Identity slot mapping: lane() must equal the old base + core arithmetic
+    # on Granite Ridge, or every front-end silently misreads Vermeer-style parts.
+    assert probe_profile.slot(3) == 3 and probe_profile.lane(317, 3) == 320
+    assert probe_profile.lane_values(list(range(500)), 333) == list(range(333, 341))
+    assert probe_profile.gidx("ppt_limit") == 2
+    assert probe_profile.gidx("tctl") == 11
+    assert probe_profile.gidx("socket_power") == 20
+    assert probe_profile.gidx("no_such_field") is None
+    other = PROFILES[(0x620205, 2452, 16)]
+    assert other.gidx("socket_power") == 26, \
+        "9950X3D socket power moved to d[26]; the map must say so, not a branch"
+    assert other.gidx("ppt_limit") == 2 and other.slot(15) == 15
+
+    # Vermeer: fused-off slots 2-3, writes closed at every layer.
+    vermeer = PROFILES[(0x380905, 1488, 6)]
+    assert vermeer.float_count == 372
+    assert [vermeer.slot(c) for c in range(6)] == [0, 1, 4, 5, 6, 7]
+    assert vermeer.lane(188, 2) == 192, \
+        "Linux core 2 is SMU slot 4: base + core would read a fused-off lane"
+    assert vermeer.lane_values(list(range(500)), 172) == [172, 173, 176, 177, 178, 179]
+    assert vermeer.gidx("ppt_limit") is None
+    assert vermeer.gidx("tctl") is None
+    assert not vermeer.allow_smu_writes
+    for _id in (0x3E, 0x3C, 0x3D, 0x35, 0x50, 0xD5):
+        assert not smu_message_supported(vermeer, _id), \
+            f"0x{_id:02x} must not pass on Vermeer"
+    try:
+        curve_optimizer_command(vermeer, 0, -30)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("CO write must be unconstructible on Vermeer")
+    try:
+        read_curve_optimizer_offsets(vermeer)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("RSMU CO readback must refuse on Vermeer")
+    try:
+        vermeer.slot(6)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("slot() must range-check the Linux core index")
+    assert vermeer.confidence("core_power") == "high"
+    assert vermeer.confidence("core_voltage") == "high"
+    assert vermeer.confidence("core_temp") == "confirmed"
+    assert probe_profile.confidence("core_power") == "confirmed"
+    # Every map key must be a canonical name: anything else is a typo that
+    # would otherwise hide as "unsupported".
+    for key, prof in PROFILES.items():
+        unknown = validate_profile_globals(prof)
+        assert not unknown, f"{prof.name}: unknown global names {unknown}"
     assert curve_optimizer_read_command(probe_profile, 0) == (0xD5, 0)
     assert curve_optimizer_read_command(probe_profile, 7) == (0xD5, 7 << 20)
     assert decode_curve_optimizer_response(0xFFFFFFE2) == -30
@@ -507,7 +779,7 @@ if __name__ == "__main__":
     print(f"never-send list: {len(BLOCKED_MP1_IDS)} MP1 message IDs; "
           f"RSMU allowlist: {len(RSMU_ALLOWED_IDS)}")
     if profile:
-        print(f"per-core temperatures: d[{profile.core_temp}.."
-              f"{profile.core_temp + profile.cores - 1}]")
+        lanes = [profile.lane(profile.core_temp, c) for c in range(profile.cores)]
+        print(f"per-core temperatures: {', '.join(f'd[{i}]' for i in lanes)}")
         writes, write_why = smu_writes_supported()
         print(f"SMU writes: {'enabled' if writes else 'blocked'} ({write_why})")
