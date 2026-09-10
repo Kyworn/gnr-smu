@@ -2,7 +2,16 @@
 
 Telemetry map and SMU control tools for AMD Granite Ridge (Zen 5) under Linux.
 
-This is a fork of [Kyworn/gnr-smu](https://github.com/Kyworn/gnr-smu).
+> [!NOTE]
+> **Project status and thanks.** Maintenance is currently slower than usual because
+> the maintainer is dealing with health issues. Replies and reviews may therefore
+> take some time; the reduced activity does not mean that contributions are being
+> ignored or taken for granted.
+>
+> Special thanks to [Thomas Pöchtrager (@tpoechtrager)](https://github.com/tpoechtrager),
+> whose measurements, Ryzen 9 9950X3D implementation, hardware validation and
+> HWiNFO-style dashboard substantially expanded and improved this project. His work
+> is now part of the main branch. See [Credits](#credits) for the details.
 
 Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
 The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
@@ -19,10 +28,10 @@ The `ryzen_smu` driver exposes a model-specific PM table at
 1828 bytes / 457 float32 values; the 9950X3D table is 2452 bytes / 613 values. This
 repo contains the measured layouts and tools that select the correct profile.
 
-## What this fork changes
+## Major community additions
 
-- **Adds Ryzen 9 9950X3D support.** The original repo only supports the Ryzen 7
-  9800X3D. This fork adds a full second hardware profile for the 9950X3D — PM table
+- **Ryzen 9 9950X3D support.** Thomas Pöchtrager's contribution adds a full second
+  hardware profile alongside the original Ryzen 7 9800X3D support — PM table
   `0x620205`, all 16 per-core temperatures, and a model-specific SMU command
   allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
 - **Unified HWiNFO-style dashboard.** The GUI ([`tools/gui/gnr_master.py`](tools/gui/gnr_master.py))
@@ -223,14 +232,33 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
 
 ## Credits
 
-[@tpoechtrager](https://github.com/tpoechtrager) sent the first PM-table dump from a
-second Granite Ridge part (Ryzen 9 9950X3D, table version `0x620205`, 613 floats) and
-opened [PR #1](https://github.com/Kyworn/gnr-smu/pull/1) mapping its per-core arrays,
-validated across both CCDs against `Tccd1`/`Tccd2`. That PR also used the ZenStates MP1
-command order, which disagreed with this repo's — and it turned out this repo was the one
-that had never measured it. The correction is in
-[docs/FINDINGS.md](docs/FINDINGS.md#4a-power-limits-mp1); the tools had been writing the
-TDC box to EDC and back until then.
+### Thomas Pöchtrager — 9950X3D support and dashboard
+
+This project owes a major part of its current scope and interface to
+[Thomas Pöchtrager (@tpoechtrager)](https://github.com/tpoechtrager). He contributed:
+
+- the first PM-table dump from a second Granite Ridge part: a Ryzen 9 9950X3D with
+  table version `0x620205` and 613 floats;
+- the 9950X3D hardware profile and its 16-core telemetry mapping, validated across
+  both CCDs against `Tccd1` and `Tccd2`;
+- real-machine validation of PPT, TDC, EDC and per-core Curve Optimizer writes on
+  both CCDs;
+- the dense HWiNFO-style dashboard with current, minimum, maximum and average sensor
+  columns, persistent layout and clearer telemetry grouping;
+- additional experiments that separated evidence-backed L3/CCD telemetry from
+  speculative labels.
+
+His original work arrived in [PR #1](https://github.com/Kyworn/gnr-smu/pull/1) and
+the reviewed integration landed through [PR #2](https://github.com/Kyworn/gnr-smu/pull/2),
+with his individual commits and authorship preserved in the project history.
+
+His contribution also exposed a long-standing TDC/EDC command-order error in this
+repository. Follow-up measurements confirmed that `0x3C` controls TDC and `0x3D`
+controls EDC. The correction and its evidence are documented in
+[docs/FINDINGS.md](docs/FINDINGS.md#4a-power-limits-mp1).
+
+Thank you, Thomas, for the amount of research, testing and care you put into making
+GNR-SMU useful beyond a single machine.
 
 ## License
 
