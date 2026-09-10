@@ -25,7 +25,8 @@ Every exposed field carries a confidence level:
   credible technical evidence, with coherent hardware behavior, but no
   independent measurement available.
 - **CANDIDATE** — plausible correlation, position or value, but insufficient
-  identification. Never displayed as telemetry.
+  identification. Never presented as established telemetry; may only be
+  surfaced when explicitly labelled as a candidate/experimental field.
 - **UNKNOWN** — not enough evidence. Left unmapped.
 
 External projects such as ZenStates-Core and `ryzen_smu` are used as
@@ -75,7 +76,7 @@ blocks labelled as Power, FIT, Activity, C0, CC1 and CC6 instead of guessing.
 ![GNR-SMU Dashboard](assets/screenshot.png)
 
 The `ryzen_smu` driver exposes a model-specific PM table at
-`/sys/kernel/ryzen_smu_drv/pm_table`, with no published layout. The 9800X3D table is
+`/sys/kernel/ryzen_smu_drv/pm_table`, with no complete official public layout. The 9800X3D table is
 1828 bytes / 457 float32 values; the 9950X3D table is 2452 bytes / 613 values. This
 repo contains the measured layouts and tools that select the correct profile.
 
@@ -177,7 +178,7 @@ not missing.
 
 ## What is actually known
 
-All 457 indices have a row in [PM_TABLE_MAP.md](PM_TABLE_MAP.md), but the rows carry
+For the 9800X3D `0x620105` table, all 457 indices have a row in [PM_TABLE_MAP.md](PM_TABLE_MAP.md), but the rows carry
 very different weight, and the confidence column says which is which:
 
 - **Cross-validated (strongest).** 14 automated checks compare PM fields against
