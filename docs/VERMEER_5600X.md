@@ -55,6 +55,22 @@ consistently report `100.0`. This appears to be the firmware representation
 for inactive/non-present core slots and is not interpreted as an actual
 sleeping physical core.
 
+### Hardware fuse cross-check (this sample only)
+
+Independent SMN fuse read (`research/vermeer_fuse_check.py`, read-only):
+
+```text
+CCD fuses:  ccds_present (0x5D218) = 0x80400000  -> enable map 0x01 (CCD0)
+            ccds_down    (0x5D21C) = 0x0000003F  -> disable map 0xFE
+Core fuse:  0x30081D98 = 0x0000030C -> low byte 0x0C = bits 2,3 SET
+```
+
+SET bit = disabled (both reviewed implementations agree). Fuse-disabled
+physical slots: **2, 3** — exact match with the PM-table lanes. This
+corroborates the mapping on this CPU but does not generalize it, and it
+says nothing about *why* those cores are fused (harvest vs segmentation
+is not observable from the fuse value).
+
 ## Validated per-core blocks (offsets are block bases, + slot)
 
 | Block base | Meaning | Confidence | Evidence |
