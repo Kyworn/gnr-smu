@@ -8,7 +8,7 @@ Result on the 9800X3D (v0x620105), 2026-08-26: **0x3C is TDC, 0x3D is EDC.**
     0x3C <- 111 A   moved d[8]  TDC
 
 The repo claimed both answers at once before this ran. tools/gnr_master.py and the GUI
-sent 0x3D as TDC and 0x3C as EDC; research/smu_send.py sent the reverse, which is also
+sent 0x3D as TDC and 0x3C as EDC; research/dangerous/smu_send.py sent the reverse, which is also
 what ZenStates-Core says and what PR #1 assumes for the 9950X3D. docs/TOFIX.md called the
 question closed "via fuzzing" but named no script and recorded no number, and
 BASELINE_SNAPSHOT.md only recorded RSP=0x01 — the SMU accepting a message says nothing
@@ -31,7 +31,7 @@ Step 0 validates the read-back itself against PPT (0x3E), which nothing disputes
 d[2] does not follow a PPT write, then d[8]/d[63] would not follow either and the
 whole method is void — better to find that out before drawing a conclusion from it.
 
-    sudo python3 research/probe_tdc_edc.py
+    sudo python3 research/dangerous/probe_tdc_edc.py
 """
 
 import math

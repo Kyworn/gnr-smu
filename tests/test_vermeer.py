@@ -27,7 +27,7 @@ FIX = os.path.join(os.path.dirname(__file__), "fixtures", "vermeer")
 VERMEER = PROFILES[(0x380905, 1488, 6)]
 
 # Linux core -> SMU slot, established by the per-core captures ( hottest
-# temperature lane per pinned load; see docs/VERMEER_5600X.md ).
+# temperature lane per pinned load; see docs/architectures/vermeer/VERMEER_5600X.md ).
 EXPECTED_SLOTS = (0, 1, 4, 5, 6, 7)
 
 

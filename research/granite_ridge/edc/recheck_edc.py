@@ -2,7 +2,7 @@
 """Hunt the EDC_VALUE companion of EDC_LIMIT (0x0FC=180A) and list every float
 that saturates near 100 under load (=> percent fields, not temperatures).
 
-Run: python3 research/recheck_edc.py
+Run: python3 research/granite_ridge/edc/recheck_edc.py
 """
 
 import struct

@@ -7,7 +7,7 @@ Answers two questions the current PM_TABLE_MAP.md gets wrong:
   2. which "thermal metrics" are actually W / A / % (the map calls them
      "non-linearly encoded temperatures")
 
-Run: python3 research/recheck_sweep.py
+Run: python3 research/granite_ridge/mapping/recheck_sweep.py
 """
 
 import struct

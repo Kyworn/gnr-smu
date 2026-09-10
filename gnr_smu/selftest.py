@@ -80,7 +80,7 @@ def main():
             f"{prof.name}: power-limit message IDs must be PPT 0x3E, TDC 0x3C, EDC 0x3D"
 
     # 0x5E and 0x6F are in here because the self-test used to assert 0x5E was ALLOWED,
-    # while docs/FINDINGS.md records the whole 0x58-0x6F range freezing MP1.
+    # while docs/architectures/granite_ridge/FINDINGS.md records the whole 0x58-0x6F range freezing MP1.
     for blocked_id in (0x03, 0x0D, 0x10, 0x58, 0x5D, 0x5E, 0x6F):
         assert msg_id_blocked(blocked_id)[0], f"0x{blocked_id:02x} must be blocked"
     for allowed_id in (0x02, 0x0E, 0x3C, 0x3D, 0x3E, 0x50, 0x57, 0x70):

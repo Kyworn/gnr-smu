@@ -10,8 +10,8 @@ Read-only towards the firmware: the only sysfs writes in this tool are none
 userspace stress-ng workers, terminated after each phase.
 
 Run on the target host, e.g.:
-  python3 research/vermeer_transient.py --out /tmp/vermeer_run1.jsonl
-Analyse offline with research/vermeer_track.py.
+  python3 research/vermeer/transient/vermeer_transient.py --out /tmp/vermeer_run1.jsonl
+Analyse offline with research/vermeer/transient/vermeer_track.py.
 
 Phase plan (single run, ~7 min):
   idle 30s, matrix-1core 30s, cooldown 40s, matrix-3core 30s, cooldown 40s,

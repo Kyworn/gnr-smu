@@ -571,7 +571,7 @@ the quantity being validated. Over 60 paired reads at idle, `k10temp − d[11]` 
 Reading `pm_table` costs an SMU mailbox transfer, and that transfer warms the die
 enough to show up in the very next sensor read — then decays over a few hundred ms.
 So **always read the external sensor first**, or the tool measures its own cost.
-`research/audit_map.py` does.
+`research/granite_ridge/mapping/audit_map.py` does.
 
 The +2.14 °C that survives is **not** a sensor offset, which is what this section first
 claimed. Those 60 pairs were taken after a stress load, and the delta decays with the
@@ -588,7 +588,7 @@ The earlier "non-linear temperature encoding" conclusion was a **misdiagnosis**.
 offsets were never temperatures — they are watts, amps and percentages that were being
 compared against k10temp. Re-measured with averaged samples (20 reads per point, 30 s idle
 settle, 60 s steady-state `stress-ng --cpu 16`) using
-`research/recheck_zone0.py`, `research/recheck_sweep.py` and `research/recheck_edc.py`.
+`research/granite_ridge/mapping/recheck_zone0.py`, `research/granite_ridge/mapping/recheck_sweep.py` and `research/granite_ridge/edc/recheck_edc.py`.
 
 **Every PM-table temperature that is a temperature reads as direct °C.** No decoding needed.
 Confirmed direct-°C fields: d[11] (Tctl), d[270] (hotspot), d[317-324] (per-core).
@@ -623,7 +623,7 @@ AVX-512 heavy load.
 ## EDC_VALUE — closed, negative result (2026-07-30)
 
 `d[63]` holds the EDC limit (180 A). **There is no companion live-value float in
-PM table v0x620105.** Searched by `research/hunt_edc.py` at three load points,
+PM table v0x620105.** Searched by `research/granite_ridge/edc/hunt_edc.py` at three load points,
 scoring every one of the 457 floats on the signature EDC_VALUE must have: low at
 idle, rising with load, rising *more* under the heavier load, never above 180.
 
@@ -661,7 +661,7 @@ already what it does — do not add a computed "EDC value".
 Thirteen fields are confirmed *not* to be what this map used to claim, but their real
 meaning was still open. Two attempts, one useful.
 
-**What failed: level correlation.** `research/profile_demoted.py` pools 640 samples
+**What failed: level correlation.** `research/granite_ridge/historical/profile_demoted.py` pools 640 samples
 across seven load phases and regresses each target against twelve cross-validated
 axes. Five targets fit linearly (r² > 0.9), but none survives a runner-up check —
 under load every axis rises together, so a field that fits TDC current at r² = 0.974
@@ -678,7 +678,7 @@ worth nothing on its own:
 | d[17], d[64], d[210], d[212], d[220], d[278], d[298], d[299] | — | 0.56-0.77 | — | trend only, no axis explains them |
 
 **What failed next, and why it is worth recording: response time.**
-`research/transient_demoted.py` kills an all-core load at a known sample index and
+`research/granite_ridge/historical/transient_demoted.py` kills an all-core load at a known sample index and
 records the release at 0.2 s. The intent was to separate power-domain fields (collapse
 at once) from thermal ones (decay over tens of seconds). It does not work on this
 part: **Tctl itself falls 86 → 52 °C inside a single 0.2 s sample**, and hotspot within
@@ -713,7 +713,7 @@ unknown and no system sensor exposes anything to check them against.
 ## Honesty Audit 2026-07-30
 
 After the zone 0x000 correction, every mechanically checkable claim in this file was
-re-tested against live hardware by `research/audit_map.py`, which parses this document
+re-tested against live hardware by `research/granite_ridge/mapping/audit_map.py`, which parses this document
 and asserts each claim rather than spot-checking a hand-picked subset. Findings that
 survived (all corrected above):
 
@@ -750,7 +750,7 @@ Two methodology notes, since both produced false failures on the first run:
 
 ## Summary Statistics
 
-Counted mechanically from this file's own tables on 2026-07-30 (`research/audit_map.py`),
+Counted mechanically from this file's own tables on 2026-07-30 (`research/granite_ridge/mapping/audit_map.py`),
 per float **index**, not per table row:
 
 | Category | Indices |

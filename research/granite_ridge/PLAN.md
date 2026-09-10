@@ -1,6 +1,6 @@
 # Plan de décodage — suite 2026-07-30
 
-Exécution autonome. Chaque phase finit par `python3 research/audit_map.py` (doit
+Exécution autonome. Chaque phase finit par `python3 research/granite_ridge/mapping/audit_map.py` (doit
 sortir 0) puis un commit. Une phase qui ne conclut pas est écrite dans TOFIX.md
 avec ce qui a été éliminé, pas abandonnée en silence.
 
@@ -28,5 +28,5 @@ ce qu'ils ne sont pas. Les profiler contre les axes connus (puissance, courant,
 température, fréquence, résidence) pour trouver l'axe.
 
 ## Hors scope
-- MSG 0x58-0x6F : MP1 gèle, RSMU refuse. Mort sur ce firmware, pas de sweep. C'est la plage que docs/FINDINGS.md a testée, et celle que tools/hwgate.py bloque — ne pas la rétrécir.
+- MSG 0x58-0x6F : MP1 gèle, RSMU refuse. Mort sur ce firmware, pas de sweep. C'est la plage que docs/architectures/granite_ridge/FINDINGS.md a testée, et celle que gnr_smu/safety.py bloque — ne pas la rétrécir.
 - HSMP : demande une bascule BIOS, pas faisable sans reboot utilisateur.

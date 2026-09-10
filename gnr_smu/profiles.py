@@ -238,13 +238,13 @@ PROFILES = {
         # explicitly separate from validated fields until correlated traces
         # establish their identities.
         #
-        # 2026-08-25, research/recheck_l3.py: loading CCD0 only raises d[595]
+        # 2026-08-25, research/granite_ridge/l3/recheck_l3.py: loading CCD0 only raises d[595]
         # (+13.8 K over baseline) far more than d[596] (+6.5 K), and loading
         # CCD1 only reverses that — d[595]/d[596] are CCD-selective. d[611]/
         # d[612] move together almost identically regardless of which CCD is
         # loaded (shared/non-selective).
         #
-        # 2026-08-25, research/l3_specificity.py: an ALU-only load and an
+        # 2026-08-25, research/granite_ridge/l3/l3_specificity.py: an ALU-only load and an
         # L3-cache-thrash load pinned to the same CCD were compared. Per K of
         # CCD-avg core-temp rise, the cache-thrash load moved every one of
         # these lanes 3-6x more than the ALU load did (e.g. d[595] rose x1.54
@@ -255,7 +255,7 @@ PROFILES = {
         # cache-thrash also broke the earlier CCD-selectivity (d[596] rose
         # almost as much as d[595] despite only CCD0 being loaded). Not proof.
         #
-        # 2026-08-25, research/l3_specificity_controlled.py: repeated the test
+        # 2026-08-25, research/granite_ridge/l3/l3_specificity_controlled.py: repeated the test
         # with the confound removed by throttling the ALU load (--cpu-load
         # duty cycling) until its CCD0-avg core-temp rise matched the
         # cache-thrash run's rise to within 0.44 K. At *matched* core-temp
@@ -286,12 +286,12 @@ PROFILES = {
         # d[64] sits right after EDC_LIMIT (d[63]) and behaves like the
         # missing EDC_VALUE: idle ~7 A, rises to ~128 A under all-core load,
         # and stays above the same run's TDC current (d[9], ~108 A) as a
-        # real peak-current reading should (research/recheck_edc.py).
+        # real peak-current reading should (research/granite_ridge/edc/recheck_edc.py).
         edc_value=64,
     ),
     # AMD Ryzen 5 5600X / Vermeer (Zen 3).  Read-only: no SMU command is
     # validated on this part, so every write path stays blocked (see
-    # docs/VERMEER_5600X.md for the evidence behind each mapped block).
+    # docs/architectures/vermeer/VERMEER_5600X.md for the evidence behind each mapped block).
     #
     # Per-core blocks are 8 SMU slots wide with slots 2-3 fused off on the
     # validated machine, hence core_slots=(0, 1, 4, 5, 6, 7): Linux core 2
@@ -324,7 +324,7 @@ PROFILES = {
         # power validated against RAPL.  Clocks/rails stay HIGH (no
         # independent Linux reference); socket power is CONFIRMED.
         # Tctl deliberately absent: no field shows sample-level coherence
-        # with k10temp (see docs/VERMEER_5600X.md).
+        # with k10temp (see docs/architectures/vermeer/VERMEER_5600X.md).
         globals_map=(
             ("fclk", 48), ("uclk", 50), ("mclk", 51),
             ("vsoc", 45),

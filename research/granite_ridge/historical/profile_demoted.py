@@ -14,7 +14,7 @@ and temperature lags.
 Reported per target: best axis, r^2, slope, and whether a linear fit actually holds
 (r^2 > 0.9) or the field merely trends in the same direction (0.5-0.9) or neither.
 
-Run: python3 research/profile_demoted.py
+Run: python3 research/granite_ridge/historical/profile_demoted.py
 """
 
 import statistics

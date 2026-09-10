@@ -22,7 +22,7 @@ Load choice matters and is not obvious. Benchmarked by peak TDC value:
 integer path. --matrix is what actually loads the current rails.
   - never exceeds the 180 A limit
 
-Run: python3 research/hunt_edc.py
+Run: python3 research/granite_ridge/edc/hunt_edc.py
 """
 
 import statistics

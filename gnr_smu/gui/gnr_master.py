@@ -1058,7 +1058,7 @@ class GNRMaster(QMainWindow):
         if self.profile is not None and self.profile.confidence(block) == "high":
             return ("High-confidence mapping (load response + canonical layout "
                     "order), not independently cross-validated — see "
-                    "docs/VERMEER_5600X.md.")
+                    "docs/architectures/vermeer/VERMEER_5600X.md.")
         return ""
 
     @staticmethod

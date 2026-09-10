@@ -53,7 +53,7 @@ def require_supported_hardware():
     profile, why = get_hardware_profile()
     if profile is None:
         sys.exit(f"refusing to export: {why}\n"
-                 f"see tools/hwgate.py — the field names would be wrong, not missing.")
+                 f"see gnr_smu/ — the field names would be wrong, not missing.")
     print(f"hardware check: {why}")
     return profile
 

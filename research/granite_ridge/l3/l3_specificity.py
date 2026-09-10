@@ -19,7 +19,7 @@ B than in A, that supports L3-traffic coupling. If both loads produce the same
 lane response for similar core power, the lane is not L3-specific -- it is
 just a general CCD/package temperature sensor and the "L3" label is unproven.
 
-Run: python3 research/l3_specificity.py
+Run: python3 research/granite_ridge/l3/l3_specificity.py
 """
 
 import glob

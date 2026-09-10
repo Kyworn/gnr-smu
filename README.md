@@ -48,7 +48,7 @@ missing telemetry.
 
 Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
 The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
-command allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
+command allowlist; see [`docs/architectures/granite_ridge/9950X3D.md`](docs/architectures/granite_ridge/9950X3D.md).
 
 Read-only telemetry is also supported on the Ryzen 5 5600X / Vermeer
 (PM table `0x380905`, 1488 bytes / 372 floats, SMU firmware tested: 56.70.0).
@@ -62,7 +62,7 @@ CLDO_VDDG_IOD and CLDO_VDDG_CCD. The fused-core layout (SMU slots 2–3 off on
 the validated machine) is verified fail-closed at detection time rather than
 assumed universal. No SMU write is validated there, so limits, Curve
 Optimizer and both control dialogs stay disabled; see
-[`docs/VERMEER_5600X.md`](docs/VERMEER_5600X.md).
+[`docs/architectures/vermeer/VERMEER_5600X.md`](docs/architectures/vermeer/VERMEER_5600X.md).
 
 Vermeer Tctl remains intentionally unmapped: a plausible Tctl candidate was
 rejected after a 351-second / 1746-sample transient comparison against
@@ -85,18 +85,18 @@ repo contains the measured layouts and tools that select the correct profile.
 - **Ryzen 9 9950X3D support.** Thomas Pöchtrager's contribution adds a full second
   hardware profile alongside the original Ryzen 7 9800X3D support — PM table
   `0x620205`, all 16 per-core temperatures, and a model-specific SMU command
-  allowlist; see [`docs/9950X3D.md`](docs/9950X3D.md).
+  allowlist; see [`docs/architectures/granite_ridge/9950X3D.md`](docs/architectures/granite_ridge/9950X3D.md).
 - **Unified HWiNFO-style dashboard.** The GUI ([`tools/gui/gnr_master.py`](tools/gui/gnr_master.py))
   is a single sensor tree with current/min/max/average columns, replacing the older
   page-per-category layout. A live status bar shows CPU/CCD temperatures, peak core
   frequency, and PPT/TDC/EDC in one line.
 - **Live CPU EDC value.** `d[64]` was identified as the EDC current candidate
   (idle ~7 A, tracks above TDC current under load) and is shown next to the confirmed
-  EDC limit; see `research/recheck_edc.py`.
+  EDC limit; see `research/granite_ridge/edc/recheck_edc.py`.
 - **Actually verified the 9950X3D's "L3" candidates instead of trusting table
   position.** They were never confirmed to begin with — just assumed from where
-  they sat in the table. Live per-CCD load tests (`research/recheck_l3.py`,
-  `research/l3_specificity.py`, `research/l3_specificity_controlled.py`) checked
+  they sat in the table. Live per-CCD load tests (`research/granite_ridge/l3/recheck_l3.py`,
+  `research/granite_ridge/l3/l3_specificity.py`, `research/granite_ridge/l3/l3_specificity_controlled.py`) checked
   which fields actually respond to their own CCD and to L3-cache traffic
   specifically:
   - `d[595]`/`d[596]` (now `ccd_l3_temperature`, renamed from the unjustified
@@ -136,9 +136,9 @@ sudo python3 tools/dump_table_full.py > my_dump.txt  # raw text fallback
 Open an issue with that file and your exact CPU model. The dump tool works on
 unvalidated hardware on purpose: it drops the labels and prints raw values, which is
 exactly what is needed to compare layouts. See
-[`docs/COMMUNITY_DUMPS.md`](docs/COMMUNITY_DUMPS.md) for what a bundle contains
+[`docs/community/COMMUNITY_DUMPS.md`](docs/community/COMMUNITY_DUMPS.md) for what a bundle contains
 (and what it deliberately excludes), plus how maintainers compare submissions
-with `research/compare_tables.py`.
+with `tools/compare_tables.py`.
 
 [@tpoechtrager](https://github.com/tpoechtrager) sent the first one, from a 9950X3D —
 see [Credits](#credits).
@@ -168,7 +168,7 @@ table version moves offsets, but the bytes still parse as floats — so a GUI ca
 plausible watts and degrees that are simply the wrong fields. A different core count
 also changes the width and starting index of later per-core arrays.
 
-So the tools check first ([`tools/hwgate.py`](tools/hwgate.py)) and refuse rather than
+So the tools check first ([`gnr_smu/`](gnr_smu/)) and refuse rather than
 guess:
 
 | | Validated hardware | Anything else |
@@ -205,14 +205,14 @@ up as
 
 ## Verifying the map
 
-The map is not trusted on its word. [`research/audit_map.py`](research/audit_map.py)
+The map is not trusted on its word. [`research/granite_ridge/mapping/audit_map.py`](research/granite_ridge/mapping/audit_map.py)
 parses `PM_TABLE_MAP.md` itself and asserts every mechanically checkable claim against
 live hardware — static fields must not move under load, fields documented as zero must
 read zero, documented mirrors must be bit-identical, and cross-validated fields must
 match their system sensor within tolerance. It exits non-zero on any failure.
 
 ```bash
-sudo python3 research/audit_map.py
+sudo python3 research/granite_ridge/mapping/audit_map.py
 ```
 
 It runs a stress load and takes a few minutes. Its first run found 11 genuine
@@ -251,7 +251,7 @@ sudo python3 tools/dump_table_full.py      # complete table; labels where mapped
 SMU control uses profile-specific MP1 mailbox **message IDs** (not table offsets).
 Power limits are the same on both Granite Ridge parts — `0x3E` PPT, `0x3C` TDC, `0x3D` EDC. This repo
 asserted `0x3D` TDC / `0x3C` EDC until 2026-08-26, on the strength of a note that named
-no measurement; `research/probe_tdc_edc.py` settles it by writing a value and reading
+no measurement; `research/dangerous/probe_tdc_edc.py` settles it by writing a value and reading
 back which limit moved.
 
 Curve Optimizer differs: `0x50`-`0x57` per core on the 9800X3D, as a signed 32-bit
@@ -263,12 +263,15 @@ therefore shows live SMU values rather than a local cache and verifies every CO 
 by reading it back. Its sensor-table column order, column widths, refresh interval and
 window size remain stored in `$XDG_CONFIG_HOME/gnr_master.json`.
 
-`research/` holds the measurement scripts, one per question asked: `audit_map.py`
-(the map's regression gate), `recheck_zone0.py` / `recheck_sweep.py` / `recheck_edc.py`
-(the zone 0x000 correction), `hunt_edc.py` (the exhaustive EDC search),
-`classify_unknown.py`, `profile_load.py`, `profile_demoted.py` and
-`transient_demoted.py`. `smu_send.py` and `smu_advanced.py` are standalone MP1/RSMU
-mailbox tools.
+`research/` holds the measurement scripts, one per question asked, grouped by
+architecture (`granite_ridge/`, `vermeer/`) with superseded passes under
+`granite_ridge/historical/`: `audit_map.py` (the map's regression gate),
+`recheck_zone0.py` / `recheck_sweep.py` / `recheck_edc.py` (the zone 0x000
+correction), `hunt_edc.py` (the exhaustive EDC search), `classify_unknown.py`,
+`profile_load.py`, `profile_demoted.py` and `transient_demoted.py`.
+`smu_send.py`, `smu_advanced.py` and `probe_tdc_edc.py` live under
+`research/dangerous/` — they are the only scripts that can send SMU/SMN
+writes. See `research/README.md`.
 
 `dump_table_full.py` prints the whole table with each field's documented meaning and
 confidence, read from `PM_TABLE_MAP.md` itself.
@@ -302,7 +305,7 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   pre-filled the write dialog as 88 A. Hence the hardware gate.
 - **Every send path blocks message IDs `0x03`-`0x0D`, `0x10` and `0x58`-`0x6F`**
   outright, and that should stay. The `0x58`-`0x6F` range freezes MP1 on this part —
-  no response, reboot to recover — and it is the range `docs/FINDINGS.md` actually
+  no response, reboot to recover — and it is the range `docs/architectures/granite_ridge/FINDINGS.md` actually
   tested, so do not narrow it. The block is MP1-specific: RSMU is a separate mailbox
   with its own ID namespace, and `0x04`/`0x05` there are the ordinary PM-table read.
 - Stock limits are 162 W PPT / 120 A TDC / 180 A EDC on the 9800X3D and 200 W /
@@ -337,7 +340,7 @@ with his individual commits and authorship preserved in the project history.
 His contribution also exposed a long-standing TDC/EDC command-order error in this
 repository. Follow-up measurements confirmed that `0x3C` controls TDC and `0x3D`
 controls EDC. The correction and its evidence are documented in
-[docs/FINDINGS.md](docs/FINDINGS.md#4a-power-limits-mp1).
+[docs/architectures/granite_ridge/FINDINGS.md](docs/architectures/granite_ridge/FINDINGS.md#4a-power-limits-mp1).
 
 Thank you, Thomas, for the amount of research, testing and care you put into making
 GNR-SMU useful beyond a single machine.

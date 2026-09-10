@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analyse the Ryzen 5 5600X / Vermeer PM table dataset (0x380905, 1488 B).
 
-Usage: python3 research/vermeer_380905.py /path/to/5600x_smu_dump
+Usage: python3 research/vermeer/mapping/vermeer_380905.py /path/to/5600x_smu_dump
 
 Read-only analysis of the 15 captured .bin snapshots. Prints:
   1. constant vs dynamic fields (idle variance, load deltas)

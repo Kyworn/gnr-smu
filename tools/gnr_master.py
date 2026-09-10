@@ -12,12 +12,13 @@ from gnr_smu.safety import (curve_optimizer_command,  # noqa: E402
                             read_curve_optimizer_offsets,
                             smu_writes_supported)
 
-# Stock limits and MP1 message IDs live on the hardware profile in hwgate.py — per
-# part, since they differ. 0x3C is TDC and 0x3D is EDC, established by read-back in
-# research/probe_tdc_edc.py after this file had them the other way round; the swap was
+# Stock limits and MP1 message IDs live on the hardware profile in
+# gnr_smu/profiles.py — per part, since they differ. 0x3C is TDC and 0x3D is
+# EDC, established by read-back in
+# research/dangerous/probe_tdc_edc.py after this file had them the other way round; the swap was
 # not cosmetic, "reset to stock" was writing 180 A into a 120 A TDC.
 #
-# The never-send list also lives in hwgate.py, so the CLI, the GUI and the research
+# The never-send list also lives in gnr_smu/safety.py, so the CLI, the GUI and the research
 # tools cannot drift apart. It used to be spelled out here and again as two ifs in
 # the GUI.
 

@@ -56,7 +56,7 @@ def mailbox_addrs():
     return msg, rsp, arg0, arg0 + 4
 
 # Stock limits and the PPT/TDC/EDC message IDs both live on the profile in
-# tools/hwgate.py, and are deliberately not copied here. This file used to carry its
+# gnr_smu/profiles.py, and are deliberately not copied here. This file used to carry its
 # own pair of each: the limits said 160 A / 220 A, which are PBO figures, so "reset"
 # raised TDC and EDC instead of restoring them; the IDs happened to be right while the
 # GUI and CLI had them reversed, and nobody noticed the repo contradicting itself for

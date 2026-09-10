@@ -17,7 +17,7 @@ name the domain.
 
 Emits ready-to-paste markdown rows on stdout.
 
-Run: python3 research/classify_unknown.py
+Run: python3 research/granite_ridge/mapping/classify_unknown.py
 """
 
 import re

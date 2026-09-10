@@ -160,7 +160,7 @@ Les adresses SMN SVI3 classiques (0xE0080, 0xE00A0) retournent 0xFFFFFFFF → pa
 
 **⚠ The `✓` column only means the SMU returned `RSP=0x01`.** That is "message accepted",
 not "the field is what this row says". 0x3C and 0x3D were labelled from that column alone
-and were the wrong way round for it: `research/probe_tdc_edc.py` writes a distinctive
+and were the wrong way round for it: `research/dangerous/probe_tdc_edc.py` writes a distinctive
 value and reads back which PM-table limit moved, and finds `0x3C` moves `d[8]` (TDC)
 while `0x3D` moves `d[63]` (EDC). Every other `?` and guessed name in this table rests on
 the same weak evidence and should be read as untested.
@@ -189,7 +189,7 @@ Raw = 0x104004189 — **registre sticky** (historique depuis boot) :
 
 ```bash
 # Restore limites BIOS estimées
-sudo python3 ~/gnr-smu/research/smu_send.py reset
+sudo python3 ~/gnr-smu/research/dangerous/smu_send.py reset
 # = PPT 162W + TDC 120A + EDC 180A (stock; 160/220 are PBO figures, not a reset)
 
 # Si CPU reste à 606 MHz après reset → reboot (tout est 100% volatile)

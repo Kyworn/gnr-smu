@@ -8,7 +8,7 @@ Hypothesis under test: zone 0x000 is the classic Zen (LIMIT, VALUE) pair layout
   0x028/0x02C = THM_LIMIT / THM_VALUE (degC)
 ...not the "encoded non-linear temperature" the map claims.
 
-Run: sudo python3 research/recheck_zone0.py
+Run: sudo python3 research/granite_ridge/mapping/recheck_zone0.py
 """
 
 import struct

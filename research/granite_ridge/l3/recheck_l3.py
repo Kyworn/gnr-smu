@@ -13,7 +13,7 @@ HWiNFO L3 behaviour (from reference screenshot, idle-ish desktop):
   * clearly *below* the CCD Tdie hotspot (Tdie - 2.6 / -6.2 °C)
   * moves a few °C with load
 
-Run: python3 research/recheck_l3.py
+Run: python3 research/granite_ridge/l3/recheck_l3.py
 """
 
 import glob

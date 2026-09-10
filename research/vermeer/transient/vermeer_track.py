@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline analysis of a vermeer_transient.py run (local machine).
 
-Usage: python3 research/vermeer_track.py /path/to/run.jsonl
+Usage: python3 research/vermeer/transient/vermeer_track.py /path/to/run.jsonl
 
 Outputs:
   1. per-phase medians (k10temp, RAPL power, PM candidates)

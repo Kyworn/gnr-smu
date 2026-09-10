@@ -15,7 +15,7 @@ before the sampling window closed, so the "cooldown" samples were already idle a
 the transition itself was never recorded. Here the load is killed explicitly, at a
 known sample index, with the clock still running.
 
-Run: python3 research/transient_demoted.py
+Run: python3 research/granite_ridge/historical/transient_demoted.py
 """
 
 import statistics

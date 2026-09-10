@@ -15,7 +15,7 @@ blocked (`allow_smu_writes = False`). See Phase 7 rationale below.
   dmesg confirms `Family Codename: Vermeer`
 - Dataset: 15 snapshots (idle×3, single-core×3, all-core×3, per-core×6),
   captured 2026-09-10; fixtures in `tests/fixtures/vermeer/`
-- Analysis script: `research/vermeer_380905.py`
+- Analysis script: `research/vermeer/mapping/vermeer_380905.py`
 
 ## Linux core → SMU slot mapping (measured, not assumed)
 
@@ -38,7 +38,7 @@ the wild), so which two cores are fused off is not guaranteed identical on
 every chip — and projects like ZenStates-Core read the core-disable fuse map
 dynamically instead of assuming it. No risky SMN read is added to resolve
 this; instead the tuple is verified against read-only data at detection time
-(`_fused_layout_matches` in `tools/hwgate.py`): in the per-core
+(`_fused_layout_matches` in `gnr_smu/hardware.py`): in the per-core
 power/voltage/frequency blocks the fused slots must read exactly 0.0 and
 every mapped slot a real value (verified exact-zero/non-zero across 15
 snapshots plus 1746 transient samples at all load levels). The temperature
@@ -57,7 +57,7 @@ sleeping physical core.
 
 ### Hardware fuse cross-check (this sample only)
 
-Independent SMN fuse read (`research/vermeer_fuse_check.py`, read-only):
+Independent SMN fuse read (`research/vermeer/topology/vermeer_fuse_check.py`, read-only):
 
 ```text
 CCD fuses:  ccds_present (0x5D218) = 0x80400000  -> enable map 0x01 (CCD0)
@@ -175,6 +175,6 @@ write-blocked profiles because the query itself writes sysfs.
 - Tctl: negative result. No PM field shows sample-level coherence with
   k10temp Tctl across the 1746-sample transient run (see d[140] analysis
   above). Revisit only with new evidence, not by relabelling medians.
-- The `research/vermeer_380905.py` analyzer, `research/vermeer_transient.py`
-  logger, `research/vermeer_track.py` analysis and `tests/fixtures/vermeer/`
+- The `research/vermeer/mapping/vermeer_380905.py` analyzer, `research/vermeer/transient/vermeer_transient.py`
+  logger, `research/vermeer/transient/vermeer_track.py` analysis and `tests/fixtures/vermeer/`
   snapshots are kept so any new claim can be re-checked offline.

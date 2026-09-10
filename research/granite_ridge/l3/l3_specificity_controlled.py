@@ -19,7 +19,7 @@ This script removes that confound. It:
      real evidence of L3 coupling. If they match, the "L3" identity remains
      unsupported.
 
-Run: python3 research/l3_specificity_controlled.py
+Run: python3 research/granite_ridge/l3/l3_specificity_controlled.py
 """
 
 import glob

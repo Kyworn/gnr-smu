@@ -41,8 +41,8 @@ pure sensor readings; all 372 floats of a healthy read are finite values.
 ## Comparing dumps (maintainers)
 
 ```bash
-python3 research/compare_tables.py bundleA bundleB [bundleC ...]
-python3 research/compare_tables.py --block 172 --block 180 --block 212 bundleA bundleB
+python3 tools/compare_tables.py bundleA bundleB [bundleC ...]
+python3 tools/compare_tables.py --block 172 --block 180 --block 212 bundleA bundleB
 ```
 
 Comparison is only meaningful within one `(pm_version, size)`; mixed tables
@@ -85,7 +85,7 @@ candidates such as clocks, rails and limits) versus differing indices
 | Tool | Side | Purpose |
 |---|---|---|
 | `tools/submit_dump.py` | contributor | standardized read-only bundle |
-| `research/compare_tables.py` | maintainer | layout + index comparison |
+| `tools/compare_tables.py` | maintainer | layout + index comparison |
 | `hwgate.detect_active_slots()` | shared | zero-signature slot derivation |
 | `hwgate._fused_layout_matches()` | guard | fail-closed profile acceptance |
 | `tests/test_community.py` | tests | detector, comparison, bundle schema |

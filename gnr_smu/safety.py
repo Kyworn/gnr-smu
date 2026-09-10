@@ -15,17 +15,17 @@ from .hardware import get_hardware_profile
 # no equivalent at all — the same three-copies-of-one-rule shape that let the TDC/EDC
 # mapping stay wrong in one copy for months.
 #
-#   0x03-0x0D, 0x10   dangerous MP1 IDs (docs/FINDINGS.md)
+#   0x03-0x0D, 0x10   dangerous MP1 IDs (docs/architectures/granite_ridge/FINDINGS.md)
 #   0x58-0x6F         freeze MP1 on this part: no response, recovery needs a reboot
 #
-# The freeze range is the one docs/FINDINGS.md actually tested. This list said
+# The freeze range is the one docs/architectures/granite_ridge/FINDINGS.md actually tested. This list said
 # 0x58-0x5D for a while, which is narrower than the measurement for no stated reason
 # and left 0x5E-0x6F reachable from the research tools.
 BLOCKED_MP1_IDS = frozenset({0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x70)))
 
 # RSMU is the other mailbox, and "not on the MP1 list" is not the same statement as
 # "safe on RSMU". RSMU therefore runs as an allowlist rather than a blocklist.
-# docs/FINDINGS.md records the driver itself rejecting the 0x58-0x6F range on
+# docs/architectures/granite_ridge/FINDINGS.md records the driver itself rejecting the 0x58-0x6F range on
 # this endpoint.
 # 0x04/0x05 transfer the PM table. 0xD5 is GetDldoPsmMargin, the read-only
 # Curve Optimizer query used by ZenStates-Core on Zen 4/5 desktop parts.

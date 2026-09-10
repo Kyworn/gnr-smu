@@ -13,7 +13,7 @@ Two questions, one sweep (each load point costs ~50 s, so they share it):
     a constant ratio against d[20] Package Power across four load levels would
     identify the unit.
 
-Run: python3 research/profile_load.py
+Run: python3 research/granite_ridge/edc/profile_load.py
 """
 
 import statistics

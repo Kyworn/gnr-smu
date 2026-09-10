@@ -10,7 +10,7 @@ Tests:
   XVAL     cross-validation vs k10temp / amdgpu / cpufreq / dmidecode
   COUNT    the summary statistics (457 floats, static counts)
 
-Run: python3 research/audit_map.py
+Run: python3 research/granite_ridge/mapping/audit_map.py
 Exit code 1 if any claim fails.
 """
 

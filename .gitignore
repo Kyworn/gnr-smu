@@ -8,7 +8,7 @@ extracted_bios/
 ryzen_smu_source/
 
 # Fichiers temporaires et logs
-research/demoted_series.bin
+research/granite_ridge/historical/demoted_series.bin
 *.log
 *.dat
 *.dsl
