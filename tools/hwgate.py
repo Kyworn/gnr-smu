@@ -438,6 +438,24 @@ def _cpu_model(cpuinfo="/proc/cpuinfo"):
     return ""
 
 
+def detect_active_slots(values, bases, width=8):
+    """Derive the active SMU slot set from zero-signature per-core blocks.
+
+    A slot counts as active when it reads non-zero in ANY of the given
+    block bases.  Callers must only pass blocks where a present core can
+    never legitimately read exactly 0.0 (power/voltage/frequency — never
+    temperature, whose fused lanes report live die temperatures, nor
+    effective frequency, where a deeply sleeping present core reads 0.0).
+    Returns a sorted tuple of slot indices.  Read-only over `values`.
+    """
+    active = set()
+    for base in bases:
+        for s in range(width):
+            if values[base + s] != 0.0:
+                active.add(s)
+    return tuple(sorted(active))
+
+
 def _fused_layout_matches(profile, pm_path=None):
     """Check the profile's fused-slot layout against the live PM table.
 
@@ -445,18 +463,18 @@ def _fused_layout_matches(profile, pm_path=None):
     5600X fuses off depends on binning (down-binned dies, even dual-CCD
     SKUs exist) — it is not guaranteed identical on every chip.  Rather
     than trust the tuple blindly, verify it against read-only data: in the
-    per-core frequency block the fused slots read exactly 0.0 on the
-    validated machine while every mapped slot reads a real frequency.
+    zero-signature per-core blocks (power/voltage/frequency) the fused slots
+    read exactly 0.0 on the validated machine while every mapped slot reads
+    a real value.
     Anything else means a different layout, and the profile refuses instead
     of mislabelling cores.  Fails closed in both directions.
 
-    Several independent per-core blocks carry the same signature (power,
-    voltage and frequency lanes of fused slots read exactly 0.0 while every
-    mapped lane stays non-zero across thousands of samples at all load
-    levels), so all of them are checked — not just the frequency block.
-    The temperature block is excluded on purpose: fused temp lanes report
-    live die temperatures, not zero.  So is the effective-frequency block:
-    a deeply sleeping present core legitimately reads 0.0 there.
+    Several independent blocks carry the same signature (verified exact-zero
+    / non-zero across thousands of samples at all load levels), so all of
+    them are checked via detect_active_slots().  The temperature block is
+    excluded on purpose: fused temp lanes report live die temperatures, not
+    zero.  So is the effective-frequency block: a deeply sleeping present
+    core legitimately reads 0.0 there.
     """
     if pm_path is None:
         pm_path = PM_TABLE_PATH
@@ -471,18 +489,24 @@ def _fused_layout_matches(profile, pm_path=None):
         return False, (f"{profile.name}: cannot validate the fused-core "
                        f"layout ({e})")
     bad, dead = [], []
+    expected = set(profile.core_slots)
+    per_block = {}
     for base in (profile.core_power, profile.core_voltage,
                  profile.core_frequency):
-        bad += [s for s in profile.fused_slots() if values[base + s] != 0.0]
-        dead += [profile.slot(c) for c in range(profile.cores)
-                 if values[base + profile.slot(c)] == 0.0]
+        got = set(detect_active_slots(values, (base,)))
+        per_block[base] = sorted(got)
+        bad += sorted(got - expected)
+        dead += sorted(expected - got)
     if bad or dead:
         return False, (
             f"{profile.name}: PM-table fused-core layout differs from the "
             f"validated machine "
             f"(slots unexpectedly live: {sorted(set(bad))}, "
             f"mapped lanes reading 0.0: {sorted(set(dead))}); "
-            f"refusing instead of mislabelling cores")
+            f"per-block detection: "
+            + ", ".join(f"d[{b}]={per_block[b]}"
+                        for b in sorted(per_block))
+            + "; refusing instead of mislabelling cores")
     return True, ""
 
 

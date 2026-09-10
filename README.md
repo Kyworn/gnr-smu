@@ -129,12 +129,16 @@ Zen 5 / Granite Ridge: 9600X, 9700X, 9900X, 9950X, other PM-table variants
 ```
 
 ```bash
-sudo python3 tools/dump_table_full.py > my_dump.txt
+sudo python3 tools/submit_dump.py --out ./my_5700x   # standardized bundle (preferred)
+sudo python3 tools/dump_table_full.py > my_dump.txt  # raw text fallback
 ```
 
 Open an issue with that file and your exact CPU model. The dump tool works on
 unvalidated hardware on purpose: it drops the labels and prints raw values, which is
-exactly what is needed to compare layouts.
+exactly what is needed to compare layouts. See
+[`docs/COMMUNITY_DUMPS.md`](docs/COMMUNITY_DUMPS.md) for what a bundle contains
+(and what it deliberately excludes), plus how maintainers compare submissions
+with `research/compare_tables.py`.
 
 [@tpoechtrager](https://github.com/tpoechtrager) sent the first one, from a 9950X3D —
 see [Credits](#credits).
@@ -276,10 +280,11 @@ python3 -m unittest discover -s tests
 python3 tools/hwgate.py                 # hardware-gate self-test (refuses on unvalidated HW)
 ```
 
-The suite (40 tests) covers the Granite Ridge map regression, the Vermeer
-profile, real Vermeer PM-table fixtures and the SMU write blockade, so slot
-mapping, residency semantics and fail-closed behavior are checked without
-needing the hardware present.
+The suite (50 tests) covers the Granite Ridge map regression, the Vermeer
+profile, real Vermeer PM-table fixtures, the SMU write blockade and the
+community dump tooling, so slot mapping, residency semantics, fail-closed
+behavior and cross-machine comparison are checked without needing the
+hardware present.
 
 ## Requirements
 
