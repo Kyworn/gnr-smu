@@ -100,6 +100,10 @@ class HardwareProfile:
     # Front-ends must present these as high-confidence, not confirmed.
     # Named by HardwareProfile field, e.g. "core_power".
     provisional_blocks: tuple = ()
+    # Same, for global names (e.g. "fclk").  A name here is HIGH even when
+    # its offset is published for exactly this PM-table version: coherent
+    # values alone are not an independent measurement.
+    provisional_globals: tuple = ()
     # Display family, e.g. "Granite Ridge (Zen 5)" / "Vermeer (Zen 3)".
     arch: str = "Granite Ridge (Zen 5)"
 
@@ -139,8 +143,13 @@ class HardwareProfile:
         return None
 
     def confidence(self, block):
-        """'confirmed' or 'high' for a per-core block field name."""
-        return "high" if block in self.provisional_blocks else "confirmed"
+        """'confirmed', 'high', or None (not mapped) for a block/global."""
+        if block in self.provisional_blocks or block in self.provisional_globals:
+            return "high"
+        if block in GLOBAL_FIELD_NAMES:
+            return "confirmed" if self.gidx(block) is not None else None
+        base = getattr(self, block, None)
+        return "confirmed" if base is not None else None
 
     def fused_slots(self):
         """SMU slots with no Linux core on them (empty when identity-mapped)."""
@@ -315,7 +324,20 @@ PROFILES = {
         core_slots=(0, 1, 4, 5, 6, 7),
         core_eff_frequency=220,
         provisional_blocks=("core_power", "core_voltage"),
-        globals_map=(),
+        # Phase 2: clocks/rails published for exactly 0x380905
+        # (ZenStates-Core PowerTable.cs) with coherent values, plus package
+        # power validated against RAPL.  Clocks/rails stay HIGH (no
+        # independent Linux reference); socket power is CONFIRMED.
+        # Tctl deliberately absent: no field shows sample-level coherence
+        # with k10temp (see docs/VERMEER_5600X.md).
+        globals_map=(
+            ("fclk", 48), ("uclk", 50), ("mclk", 51),
+            ("vsoc", 45),
+            ("vddp", 137), ("vddg_iod", 138), ("vddg_ccd", 139),
+            ("socket_power", 1),
+        ),
+        provisional_globals=("fclk", "uclk", "mclk", "vsoc",
+                             "vddp", "vddg_iod", "vddg_ccd"),
         arch="Vermeer (Zen 3)",
     ),
 }
@@ -427,6 +449,14 @@ def _fused_layout_matches(profile, pm_path=None):
     validated machine while every mapped slot reads a real frequency.
     Anything else means a different layout, and the profile refuses instead
     of mislabelling cores.  Fails closed in both directions.
+
+    Several independent per-core blocks carry the same signature (power,
+    voltage and frequency lanes of fused slots read exactly 0.0 while every
+    mapped lane stays non-zero across thousands of samples at all load
+    levels), so all of them are checked — not just the frequency block.
+    The temperature block is excluded on purpose: fused temp lanes report
+    live die temperatures, not zero.  So is the effective-frequency block:
+    a deeply sleeping present core legitimately reads 0.0 there.
     """
     if pm_path is None:
         pm_path = PM_TABLE_PATH
@@ -440,17 +470,19 @@ def _fused_layout_matches(profile, pm_path=None):
     except Exception as e:
         return False, (f"{profile.name}: cannot validate the fused-core "
                        f"layout ({e})")
-    base = profile.core_frequency
-    bad = [s for s in profile.fused_slots() if values[base + s] != 0.0]
-    dead = [c for c in range(profile.cores)
-            if values[base + profile.slot(c)] == 0.0]
+    bad, dead = [], []
+    for base in (profile.core_power, profile.core_voltage,
+                 profile.core_frequency):
+        bad += [s for s in profile.fused_slots() if values[base + s] != 0.0]
+        dead += [profile.slot(c) for c in range(profile.cores)
+                 if values[base + profile.slot(c)] == 0.0]
     if bad or dead:
         return False, (
             f"{profile.name}: PM-table fused-core layout differs from the "
             f"validated machine "
-            f"(slots unexpectedly live: {bad}, mapped lanes reading 0.0: "
-            f"{[profile.slot(c) for c in dead]}); refusing instead of "
-            f"mislabelling cores")
+            f"(slots unexpectedly live: {sorted(set(bad))}, "
+            f"mapped lanes reading 0.0: {sorted(set(dead))}); "
+            f"refusing instead of mislabelling cores")
     return True, ""
 
 

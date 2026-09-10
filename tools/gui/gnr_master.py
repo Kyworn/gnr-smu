@@ -577,7 +577,8 @@ class GNRMaster(QMainWindow):
         for key, label in (("fclk", "Infinity Fabric Clock (FCLK)"),
                            ("uclk", "Memory Controller Clock (UCLK)"),
                            ("mclk", "Memory Clock (MCLK)")):
-            self._add_sensor(clocks, key, label, "MHz")
+            self._add_sensor(clocks, key, label, "MHz",
+                             self._block_tooltip(key))
         core_clocks = self._add_sensor_group(clocks, "Core Clocks", expanded=True)
         for core in range(self.core_count):
             self._add_sensor(core_clocks, f"core_clock_{core}",
@@ -598,7 +599,8 @@ class GNRMaster(QMainWindow):
                            ("vddg_iod", "CLDO_VDDG_IOD"), ("vddg_ccd", "CLDO_VDDG_CCD"),
                            ("vddp", "CLDO_VDDP"), ("vid", "CPU VID"),
                            ("vid_limit", "VID Limit")):
-            self._add_sensor(voltages, key, label, "V")
+            self._add_sensor(voltages, key, label, "V",
+                             self._block_tooltip(key))
         core_voltages = self._add_sensor_group(voltages, "Core Voltages")
         for core in range(self.core_count):
             self._add_sensor(core_voltages, f"core_voltage_{core}",
@@ -1047,8 +1049,12 @@ class GNRMaster(QMainWindow):
         return d[idx] if idx is not None else None
 
     def _block_tooltip(self, block):
-        """Confidence note for a per-core block; "" when confirmed."""
-        if self.profile is not None and self.profile.confidence(block) != "confirmed":
+        """Confidence note for a block/global name; "" unless high.
+
+        Unmapped names ("--" sensors) get no tooltip: only an explicitly
+        high-confidence mapping is marked.
+        """
+        if self.profile is not None and self.profile.confidence(block) == "high":
             return ("High-confidence mapping (load response + canonical layout "
                     "order), not independently cross-validated — see "
                     "docs/VERMEER_5600X.md.")

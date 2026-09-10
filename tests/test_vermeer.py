@@ -117,11 +117,25 @@ class TestVermeerDetection(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             read_curve_optimizer_offsets(VERMEER)
 
-    def test_no_global_telemetry_mapped(self):
-        for name in ("ppt_limit", "ppt_value", "tdc_limit", "tdc_value",
-                     "thm_limit", "tctl", "edc_limit", "fclk", "uclk", "mclk",
-                     "vsoc", "vddg_ccd", "socket_power"):
+    def test_global_map_is_exactly_the_validated_set(self):
+        expected = {"fclk": 48, "uclk": 50, "mclk": 51, "vsoc": 45,
+                    "vddp": 137, "vddg_iod": 138, "vddg_ccd": 139,
+                    "socket_power": 1}
+        self.assertEqual(dict(VERMEER.globals_map), expected)
+        # Deliberately absent: Tctl (no sample-level coherence), power
+        # limits, FCLK-adjacent unknowns.
+        for name in ("tctl", "ppt_limit", "ppt_value", "tdc_limit",
+                     "tdc_value", "thm_limit", "edc_limit", "vid",
+                     "vdd_misc", "pkg_power", "cpu_power"):
             self.assertIsNone(VERMEER.gidx(name), name)
+
+    def test_global_confidence_levels(self):
+        for name in ("fclk", "uclk", "mclk", "vsoc", "vddp",
+                     "vddg_iod", "vddg_ccd"):
+            self.assertEqual(VERMEER.confidence(name), "high", name)
+        self.assertEqual(VERMEER.confidence("socket_power"), "confirmed")
+        self.assertIsNone(VERMEER.confidence("tctl"))
+        self.assertIsNone(VERMEER.confidence("vid"))
 
 
 class TestVermeerSlots(unittest.TestCase):
@@ -199,6 +213,46 @@ class TestVermeerSlots(unittest.TestCase):
             self.assertLess(v, 1.5)
 
 
+class TestPhase2Globals(unittest.TestCase):
+    """Phase 2: clocks/rails/package-power in the 15 fixtures."""
+
+    def test_clocks_bit_constant(self):
+        for name in ("idle_01.bin", "single_core_02.bin", "all_core_03.bin",
+                     "core4_load.bin"):
+            row = load_fixture(name)
+            self.assertEqual(row[48], 1800.0, name)
+            self.assertEqual(row[50], 1600.0, name)
+            self.assertEqual(row[51], 1600.0, name)
+
+    def test_rails_bit_constant(self):
+        for name in ("idle_01.bin", "all_core_01.bin", "core0_load.bin"):
+            row = load_fixture(name)
+            self.assertEqual(row[45], 1.1875, name)
+            self.assertAlmostEqual(row[137], 0.9002, places=3, msg=name)
+            self.assertAlmostEqual(row[138], 0.9976, places=3, msg=name)
+            self.assertAlmostEqual(row[139], 0.9976, places=3, msg=name)
+
+    def test_socket_power_range_and_load_response(self):
+        idle = median(["idle_01.bin", "idle_02.bin", "idle_03.bin"], 1)
+        single = median(["single_core_01.bin", "single_core_02.bin",
+                         "single_core_03.bin"], 1)
+        full = median(["all_core_01.bin", "all_core_02.bin",
+                       "all_core_03.bin"], 1)
+        self.assertGreater(idle, 15.0)
+        self.assertLess(idle, 35.0)
+        self.assertGreater(single, idle + 3.0)
+        self.assertGreater(full, 60.0)
+        self.assertLess(full, 100.0)
+
+    def test_socket_mirrors_identical(self):
+        # d[13]/d[29] track d[1] to ~1e-3 (same reading, float32 noise);
+        # only d[1] is mapped.
+        for name in ("idle_01.bin", "all_core_02.bin", "core3_load.bin"):
+            row = load_fixture(name)
+            self.assertAlmostEqual(row[13], row[1], places=2, msg=name)
+            self.assertAlmostEqual(row[29], row[1], places=2, msg=name)
+
+
 class TestVermeerExporterFields(unittest.TestCase):
     def test_named_fields_use_slots(self):
         from export_telemetry import named_fields
@@ -208,8 +262,14 @@ class TestVermeerExporterFields(unittest.TestCase):
         self.assertEqual(by_name["c0_temp"], 188)
         self.assertEqual(by_name["c5_temp"], 195)
         self.assertEqual(by_name["c2_freq_eff"], 224)
-        # No unmapped globals leak in.
-        for name in ("ppt_limit", "tctl", "fclk"):
+        # Phase 2 globals with exact indices.
+        for name, idx in (("fclk", 48), ("uclk", 50), ("mclk", 51),
+                          ("socket_power", 1), ("vddcr_soc", 45),
+                          ("cldo_vddg_iod", 138), ("cldo_vddg_ccd", 139),
+                          ("cldo_vddp", 137)):
+            self.assertEqual(by_name[name], idx, name)
+        # Still absent: Tctl, limits, unmapped rails.
+        for name in ("ppt_limit", "tctl", "vdd_misc", "vid_live"):
             self.assertNotIn(name, by_name)
         # No boost column without a validated boost block.
         self.assertFalse(any("boost" in n for n in by_name))
@@ -251,6 +311,16 @@ class TestFusedLayoutGuard(unittest.TestCase):
             VERMEER, self._write_pm(lambda r: r.__setitem__(212, 0.0)))
         self.assertFalse(ok)
         self.assertIn("differs from the validated machine", why)
+
+    def test_other_blocks_checked_too(self):
+        # The signature spans power/voltage/frequency: corrupting a fused
+        # lane in any of them refuses, even with the frequency block intact.
+        from hwgate import _fused_layout_matches
+        for base in (172, 180):
+            ok, _ = _fused_layout_matches(
+                VERMEER, self._write_pm(lambda r, b=base: r.__setitem__(b + 2,
+                                                                       1.0)))
+            self.assertFalse(ok, f"base d[{base}]")
 
     def test_detection_refuses_foreign_layout(self):
         tmp = tempfile.TemporaryDirectory()
@@ -353,6 +423,38 @@ class TestGlobalNames(unittest.TestCase):
         for key in ((0x620105, 1828, 8), (0x620205, 2452, 16)):
             self.assertEqual(PROFILES[key].confidence("core_power"),
                              "confirmed")
+
+
+class TestLivePowerIndex(unittest.TestCase):
+    def test_resolves_per_profile(self):
+        from export_telemetry import live_power_index
+        # Granite Ridge: ppt_value.
+        self.assertEqual(
+            live_power_index(PROFILES[(0x620105, 1828, 8)]), 3)
+        self.assertEqual(
+            live_power_index(PROFILES[(0x620205, 2452, 16)]), 3)
+        # Vermeer: no ppt_value, falls back to the RAPL-validated socket
+        # power instead of printing NaN.
+        self.assertEqual(live_power_index(VERMEER), 1)
+
+    def test_none_when_nothing_mapped(self):
+        from export_telemetry import live_power_index
+
+        class NoPower:
+            def gidx(self, name):
+                return None
+
+        self.assertIsNone(live_power_index(NoPower()))
+
+    def test_index_zero_is_valid(self):
+        # Regression guard for `or`-style resolution: index 0 must survive.
+        from export_telemetry import live_power_index
+
+        class ZeroSocket:
+            def gidx(self, name):
+                return {"ppt_value": None, "socket_power": 0}[name]
+
+        self.assertEqual(live_power_index(ZeroSocket()), 0)
 
 
 if __name__ == "__main__":

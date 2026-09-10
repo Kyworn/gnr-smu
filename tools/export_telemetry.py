@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-GNR-SMU Telemetry Exporter — Granite Ridge (Zen 5)
+GNR-SMU Telemetry Exporter — profile-backed (Granite Ridge, Vermeer read-only)
 Usage:
   python3 export_telemetry.py              # 5 JSON snapshots -> gnr_telemetry_dump.json
   python3 export_telemetry.py --csv        # named CSV snapshot -> gnr_telemetry.csv
@@ -64,8 +64,18 @@ _EXTRA_9950X3D = [
     ("cldo_vddp", "vddp", "V"),
 ]
 
-_EXTRA_9800X3D = [
-    ("hotspot_temp", "hotspot_temp", "C"),
+# Phase 2 (Vermeer): rail columns plus the RAPL-validated socket power.
+# Column names reuse the Granite Ridge vocabulary on purpose so downstream
+# consumers see one schema; the offsets come from the profile map.
+_EXTRA_VERMEER = [
+    ("socket_power", "socket_power", "W"),
+    ("vddcr_soc", "vsoc", "V"),
+    ("cldo_vddg_iod", "vddg_iod", "V"),
+    ("cldo_vddg_ccd", "vddg_ccd", "V"),
+    ("cldo_vddp", "vddp", "V"),
+]
+
+_EXTRA_9800X3D = [    ("hotspot_temp", "hotspot_temp", "C"),
     ("pkg_power", "pkg_power", "W"),
     ("soc_power", "soc_power", "W"),
     ("soc_telemetry", "soc_telemetry", "metric"),
@@ -98,6 +108,8 @@ def global_fields(profile):
         extras = _EXTRA_9950X3D
     elif profile.pm_version == 0x620105:
         extras = _EXTRA_9800X3D
+    elif profile.pm_version == 0x380905:
+        extras = _EXTRA_VERMEER
     else:
         extras = []
     for column, key, unit in extras:
@@ -237,6 +249,18 @@ def cmd_json():
     print(f"\n✅ Exported {len(snapshots)} snapshots -> {JSON_OUTPUT}")
 
 
+def live_power_index(profile):
+    """Profile-backed package-power index for the live status line.
+
+    Prefers ppt_value, falls back to socket_power, else None.  Explicit
+    None checks throughout: index 0 is a valid table index.
+    """
+    idx = profile.gidx("ppt_value")
+    if idx is None:
+        idx = profile.gidx("socket_power")
+    return idx
+
+
 def cmd_csv(live_interval=None):
     profile = require_supported_hardware()
     fields = named_fields(profile)
@@ -260,8 +284,8 @@ def cmd_csv(live_interval=None):
                     writer.writerow(floats_to_row(d, time.time(), profile, fields))
                     f.flush()
                     n += 1
-                    pkg = d[profile.gidx("ppt_value")] \
-                        if profile.gidx("ppt_value") is not None else float("nan")
+                    pidx = live_power_index(profile)
+                    pkg = d[pidx] if pidx is not None else float("nan")
                     max_temp = max(profile.lane_values(d, profile.core_temp))
                     print(f"\r  [{n}] Pkg: {pkg:.1f}W  MaxTemp: {max_temp:.1f}°C", end="", flush=True)
                     time.sleep(live_interval)

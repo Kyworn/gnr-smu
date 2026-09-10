@@ -38,9 +38,13 @@ the wild), so which two cores are fused off is not guaranteed identical on
 every chip — and projects like ZenStates-Core read the core-disable fuse map
 dynamically instead of assuming it. No risky SMN read is added to resolve
 this; instead the tuple is verified against read-only data at detection time
-(`_fused_layout_matches` in `tools/hwgate.py`): in the per-core frequency
-block the fused slots must read exactly 0.0 and every mapped slot a real
-frequency. Any other layout refuses the profile with an explicit reason
+(`_fused_layout_matches` in `tools/hwgate.py`): in the per-core
+power/voltage/frequency blocks the fused slots must read exactly 0.0 and
+every mapped slot a real value (verified exact-zero/non-zero across 15
+snapshots plus 1746 transient samples at all load levels). The temperature
+block is excluded on purpose (fused temp lanes report live die temperatures)
+as is effective frequency (a sleeping present core legitimately reads 0.0).
+Any other layout refuses the profile with an explicit reason
 rather than mislabelling cores. Support is therefore conservative by design:
 correct on the validated machine, refusal elsewhere.
 
@@ -55,7 +59,7 @@ sleeping physical core.
 
 | Block base | Meaning | Confidence | Evidence |
 |---|---|---|---|
-| d[172] | Per-core power (W) | HIGH | 6/6 slot-selective; 0.5–1.2 W idle → 9–11 W loaded; first group of the canonical Zen per-core order (same order as Matisse `0x240903` in `ryzen_smu` `monitor_cpu.c`: POWER, VOLTAGE, TEMP, FIT, IDDMAX, FREQ, FREQEFF, C0, CC1, CC6). No independent watt reference exists on this platform (no RAPL), so not CONFIRMED. |
+| d[172] | Per-core power (W) | HIGH | 6/6 slot-selective; 0.5–1.2 W idle → 9–11 W loaded; first group of the canonical Zen per-core order (same order as Matisse `0x240903` in `ryzen_smu` `monitor_cpu.c`: POWER, VOLTAGE, TEMP, FIT, IDDMAX, FREQ, FREQEFF, C0, CC1, CC6). Corroborated at package level: sum of the 6 lanes tracks RAPL `package-0` with gain 1.10 and a constant ~25.5 W uncore offset — close but not 1:1, and there is no per-core watt reference, so not CONFIRMED. |
 | d[180] | Per-core voltage (V) | HIGH | 6/6 slot-selective (small deltas, +0.2 V); 0.94 V idle → 1.12–1.18 V loaded. No SVI cross-check done yet. |
 | d[188] | Per-core temperature (°C) | CONFIRMED | 6/6 slot-selective; 38–40 °C idle → 55–72 °C loaded; live k10temp agreement (d[188]=62.63 vs Tccd1=62.75 under pinned load). Lanes d[190]/d[191] (fused slots) are live but follow no single core — never exposed as core temps. |
 | d[212] | Per-core frequency (GHz) | CONFIRMED | 6/6 slot-selective; 3.7 idle → 4.3–4.55 loaded; live cpufreq agreement (d[212]=4.545 GHz vs cpu0 `scaling_cur_freq` 4541 MHz under pinned load). |
@@ -63,6 +67,27 @@ sleeping physical core.
 | d[228] | C0 residency (%) | CONFIRMED | 6/6 slot-selective; 2–9 % idle → 70–100 % loaded lane, 100 % all lanes under full load. |
 | d[236] | CC1 residency (%) | CONFIRMED | 6/6 slot-selective; ~22–36 % idle → ~0 on the loaded lane, 0 everywhere under full load. |
 | d[244] | CC6 residency (%) | CONFIRMED | 6/6 slot-selective; ~55–75 % idle → ~10–23 % loaded lane, 0 everywhere under full load; fused slots read 100. |
+
+## Phase 2 globals (clocks, rails, socket power)
+
+| Byte offset | Index | Meaning | Unit | Confidence | External source | Hardware proof | Limits |
+|---|---|---|---|---|---|---|---|
+| 0x0C0 | d[48] | FCLK | MHz | HIGH | ZenStates-Core `PowerTable.cs`, row `0x380905 / 0x5D0` (exact version) | Bit-constant 1800 across 15 snapshots + 1746 transient samples; DDR4-3200 box (MCLK/UCLK lock at 1600 as expected, FCLK 1800 = plausible BIOS setting) | No independent FCLK readout on Linux; constant so no load dynamics to check |
+| 0x0C8 | d[50] | UCLK | MHz | HIGH | Same row | Bit-constant 1600; equals MCLK (coupled 1:1, expected for DDR4-3200) | Same as FCLK |
+| 0x0CC | d[51] | MCLK | MHz | HIGH | Same row | Bit-constant 1600; exactly DDR4-3200/2 per `dmidecode` | Same as FCLK |
+| 0x0B4 | d[45] | VDDCR_SOC | V | HIGH | Same row | Bit-constant 1.1875; in-range SoC voltage | No VRM/SVI readout in-kernel on this box |
+| 0x224 | d[137] | CLDO_VDDP | V | HIGH | Same row | Bit-constant 0.9002; canonical 0.90 V VDDP | Same as VDDCR_SOC |
+| 0x228 | d[138] | CLDO_VDDG_IOD | V | HIGH | Same row | Bit-constant 0.9976; in-range VDDG | Same as VDDCR_SOC |
+| 0x22C | d[139] | CLDO_VDDG_CCD | V | HIGH | Same row | Bit-constant 0.9976; in-range VDDG | Same as VDDCR_SOC |
+| — | d[1] | Socket (package) power | W | CONFIRMED | None needed (measured) | RAPL `package-0` on-die energy accounting over 1746 samples, 7 phase groups, 3 workload types (matrix/int64/cache): Pearson +0.9996, gain +0.977, offset +0.04 W, RMSE 0.51 W, MAE 0.25 W. Confirmed against AMD RAPL socket accounting, not against an external electrical power meter. d[13]/d[29] track d[1] to ~1e-3 (same reading); only d[1] mapped. d[150] close second (RMSE 1.91), left unmapped. | RAPL "core" domain on this AMD box behaves oddly (non-monotonic vs threads) and was not used; package domain only |
+
+Provenance note on ZenStates-Core: all Zen3 rows (`0x380005`–`0x380905`)
+share identical clock/rail offsets, so this is one family-level source, not
+one confirmation per version. It counts as the published-for-exact-version
+axis; coherence with hardware is the second axis; both together clear HIGH,
+not CONFIRMED. The independently reverse-engineered `CORE_POWER = 0x2B0 =
+d[172]` match is genuine coherence between the two axes. `VDD_MISC` is `-1`
+(unmapped) in that row too.
 
 ## Deliberately unmapped (measured but not identified, or unconfirmed)
 
@@ -75,35 +100,46 @@ sleeping physical core.
   ~0.5/13.7 and ~0.5/6.1 idle/load. Current-related candidates, unidentified.
 - d[268:276] — rises toward 100 under load but not cleanly core-selective
   (residual-heat confound). Unidentified.
-- d[1] (+mirrors d[13]/d[29]/d[150]) — 27 W idle → 79.5 W full load, plausible
-  package power, but no independent reference and no confirmed limit pairing.
-  Candidate only.
-- d[140] — 52–70 idle (varies between idle states) → ~64 under load, near
-  Tctl under load but not at idle. Hotspot-like, not validated as Tctl.
+- d[1] — now mapped as socket power (CONFIRMED, see Phase 2 table above).
+  d[13]/d[29] are the same reading to ~1e-3; d[150] is a close second
+  (RMSE 1.91 vs RAPL). Only d[1] is exposed.
+- d[140] — hotspot/peak candidate, NOT Tctl. Median aligns with Tctl under
+  sustained load (±2 °C over 7 phase groups), but 40% of 5 Hz samples deviate
+  >5 °C with sample-to-sample jumps up to ~15 °C while k10temp never jumps;
+  it reads at or above the hottest core lane in 95% of samples (median +6.1)
+  yet also drops below Tctl in cooldown (−3.0). Consistent with an
+  instantaneous package-hotspot max under different smoothing than k10temp,
+  inconsistent with a Tctl identity. Median agreement alone would have
+  mislabelled it — this is why sample-level coherence is required.
 - d[127] — 42 idle → 48.5 full load; tracks package heat weakly, not Tctl
-  (moves +1 °C for +15 °C of Tctl under single-core load).
-- d[144]/d[145]/d[358] — heat-tracking but inconsistent baselines; unidentified.
+  (gain 0.18 vs Tctl over the transient run).
+- d[144]/d[145]/d[358] — heat-tracking but nonlinear (flat at low
+  temperature, steep at high; gains 0.43–0.64 where measurable). d[358] has
+  the best raw Pearson vs Tctl (+0.91) yet a gain of only 0.43 — rejected as
+  Tctl. All unidentified.
 - PPT/TDC/EDC limits and values — the constant pool (90/75/95/115) does not
   pin to 5600X stock spec without a write-back test, which is forbidden here.
-  Not exposed.
-- FCLK/UCLK/MCLK, VDDCR_SOC, VDDG CCD/IOD, VDDP, VID, boost limit — no
-  validated mapping. Not exposed (GUI shows "--").
+  Not exposed. (`ryzen_smu` docs show Matisse/Vermeer RSMU power commands;
+  documented only, never executed.)
+- FCLK/UCLK/MCLK, VDDCR_SOC, VDDG CCD/IOD, VDDP — now mapped HIGH (see Phase 2
+  table). VID, VDD_MISC, boost limit — still no validated mapping ("--").
 - d[284:292] (8× 4.75 const), d[292:300] (6× 3.691 + 2× 0.55), d[48:52]/d[74:82]
   (1800/1600 consts) — static, plausible clock/Boost tables, unidentified.
+  (d[48]/d[50]/d[51] of that range are now the mapped clocks above.)
 
 ## What the GUI/exporter show on this profile
 
 Per-core temperature, power, voltage, frequency, effective frequency,
-C0/CC1/CC6 (+ CCD averages). Everything else is "--" / omitted, including
-Tctl, package power, limits and all rails. The Curve Optimizer group is hidden
+C0/CC1/CC6 (+ CCD averages), plus FCLK/UCLK/MCLK, VDDCR_SOC, VDDG CCD/IOD,
+VDDP and socket power. Everything else is "--" / omitted, including Tctl,
+limits, VID/VDD_MISC and boost. The Curve Optimizer group is hidden
 and both control dialogs refuse to open (`smu_writes_supported() == False`).
 
 Confidence is visible, not just documented: temperature, frequency, effective
-frequency and residency are confirmed, while core power and voltage are
-`provisional_blocks` (HIGH — load response + canonical layout order, no
-independent watt/volt reference on this platform) and carry a
-"high-confidence, not cross-validated" tooltip in the GUI. See the table
-above for the per-block level.
+frequency, residency and socket power are confirmed, while core power,
+core voltage, the three clocks and the four rails are HIGH (explicitly
+published offsets with coherent values, but no independent Linux reference)
+and carry a "high-confidence, not cross-validated" tooltip in the GUI.
 
 ## Why writes stay off (Phase 7)
 
@@ -117,10 +153,12 @@ write-blocked profiles because the query itself writes sysfs.
 
 ## Open items
 
-- SVI/RAPL-style cross-check of per-core voltage/power (would promote HIGH →
-  CONFIRMED). No such interface is available in-kernel on this box.
-- Tctl / package-power identification needs a paired transient against k10temp
-  across several load levels; single-point checks ruled out d[127]/d[140]/
-  d[144]/d[145]/d[358] as Tctl (see validation notes above).
-- The `research/vermeer_380905.py` analyzer and `tests/fixtures/vermeer/`
+- Per-core voltage/power promotion (HIGH → CONFIRMED) needs an SVI-style
+  per-core reference. RAPL package corroborates the sum (gain ~1.1, constant
+  uncore offset) but is not per-core. No such interface in-kernel on this box.
+- Tctl: negative result. No PM field shows sample-level coherence with
+  k10temp Tctl across the 1746-sample transient run (see d[140] analysis
+  above). Revisit only with new evidence, not by relabelling medians.
+- The `research/vermeer_380905.py` analyzer, `research/vermeer_transient.py`
+  logger, `research/vermeer_track.py` analysis and `tests/fixtures/vermeer/`
   snapshots are kept so any new claim can be re-checked offline.
