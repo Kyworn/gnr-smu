@@ -11,14 +11,14 @@ The repo claimed both answers at once before this ran. tools/gnr_master.py and t
 sent 0x3D as TDC and 0x3C as EDC; research/dangerous/smu_send.py sent the reverse, which is also
 what ZenStates-Core says and what PR #1 assumes for the 9950X3D. docs/TOFIX.md called the
 question closed "via fuzzing" but named no script and recorded no number, and
-BASELINE_SNAPSHOT.md only recorded RSP=0x01 — the SMU accepting a message says nothing
+9800X3D_BASELINE_0x620105.md only recorded RSP=0x01 — the SMU accepting a message says nothing
 about which limit it moved. The tools have since been corrected to match the read-back.
 
 Kept as a regression check: rerun it after any change to the MP1 command mapping, and on
 any new part before enabling SMU writes there.
 
 It is directly observable. Zone 0x000 exposes both limits as floats in amps:
-d[8] is the TDC limit and d[63] the EDC limit (PM_TABLE_MAP.md, corrected 2026-07-30).
+d[8] is the TDC limit and d[63] the EDC limit (9800X3D_PM_TABLE_0x620105.md, corrected 2026-07-30).
 Write a distinctive value on one message ID and read back which one moved.
 
 Two safety properties make this cheap to run:
@@ -56,7 +56,7 @@ PROBE_PPT_W = 151
 
 # What this probe does and does not establish. The PPT control proves the write path
 # and the read-back path work end to end; it does not independently confirm that d[8]
-# and d[63] are TDC and EDC — that identification comes from PM_TABLE_MAP.md, where it
+# and d[63] are TDC and EDC — that identification comes from 9800X3D_PM_TABLE_0x620105.md, where it
 # rests on the values matching stock spec exactly. What the probe adds is which
 # message ID drives which of those two fields, and for that a single disjoint,
 # reproduced-on-demand result is enough. It is one trial per ID: rerun it rather than

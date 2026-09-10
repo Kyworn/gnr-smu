@@ -178,6 +178,6 @@ def hardware_supported():
 
 
 def map_labels_supported():
-    """The full PM_TABLE_MAP.md is currently the 9800X3D/457-float map."""
+    """The full 9800X3D_PM_TABLE_0x620105.md is currently the 9800X3D/457-float map."""
     profile, _ = get_hardware_profile()
     return profile is not None and profile.pm_version == 0x620105

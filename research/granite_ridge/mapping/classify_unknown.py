@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Phase 3 — classify the 90 float indices that have no row in PM_TABLE_MAP.md.
+"""Phase 3 — classify the 90 float indices that have no row in 9800X3D_PM_TABLE_0x620105.md.
 
 Not an attempt to decode them. The point is coverage honesty: every index gets a
 row, even if that row says "unknown". A field classified as a permanent zero or a
@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
-MAP = ROOT / "docs" / "architectures" / "granite_ridge" / "PM_TABLE_MAP.md"
+MAP = ROOT / "docs" / "architectures" / "granite_ridge" / "9800X3D_PM_TABLE_0x620105.md"
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 N = 457
 

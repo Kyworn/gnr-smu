@@ -90,7 +90,7 @@ def payload_allowed(profile, msg_id, arg0):
     Nothing checked this before: both front-ends bounded the number in their own
     spinbox and then handed an unchecked arg0 to the sender, so any direct caller —
     or a GUI field converted through ``arg0 & 0xFFFFFFFF`` — reached the mailbox with
-    whatever it liked. BASELINE_SNAPSHOT.md records ``ppt 0`` locking the CPU to
+    whatever it liked. 9800X3D_BASELINE_0x620105.md records ``ppt 0`` locking the CPU to
     606 MHz, which is the concrete reason a floor exists at all.
 
     Message IDs that are not power limits pass through: Curve Optimizer arguments are

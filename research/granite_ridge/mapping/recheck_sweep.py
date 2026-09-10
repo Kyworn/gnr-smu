@@ -2,7 +2,7 @@
 """Full-table sweep: classify every float by how it behaves between idle and a
 long steady-state all-core load, using k10temp as the only degC ground truth.
 
-Answers two questions the current PM_TABLE_MAP.md gets wrong:
+Answers two questions the current 9800X3D_PM_TABLE_0x620105.md gets wrong:
   1. which offsets are *really* degC (slope ~1.0 vs Tctl AND absolute match)
   2. which "thermal metrics" are actually W / A / % (the map calls them
      "non-linearly encoded temperatures")

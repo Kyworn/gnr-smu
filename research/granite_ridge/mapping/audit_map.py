@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit PM_TABLE_MAP.md against live hardware. Parses the map itself, so every
+"""Audit 9800X3D_PM_TABLE_0x620105.md against live hardware. Parses the map itself, so every
 claim it makes is tested — no hand-picked subset.
 
 Tests:
@@ -23,7 +23,7 @@ import statistics
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
-MAP = ROOT / "docs" / "architectures" / "granite_ridge" / "PM_TABLE_MAP.md"
+MAP = ROOT / "docs" / "architectures" / "granite_ridge" / "9800X3D_PM_TABLE_0x620105.md"
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 K10 = "/sys/class/hwmon/hwmon3"
 AMDGPU = "/sys/class/hwmon/hwmon7"
@@ -97,7 +97,7 @@ def cpuidle_pct(before, after):
     but it cannot calibrate it. The kernel counts per-thread time in the C3 state; CC6
     needs both SMT siblings idle at once, so the PM figure sits 10-20 points lower. And
     the sampling loop keeps its own core out of CC6, which costs that core ~30 points.
-    See the C6 section of PM_TABLE_MAP.md."""
+    See the C6 section of 9800X3D_PM_TABLE_0x620105.md."""
     (a, ta, n), (b, tb, _) = before, after
     if not n or tb <= ta:
         return None
@@ -146,7 +146,7 @@ def parse_rows():
 
 
 rows = parse_rows()
-print(f"Parsed {len(rows)} documented rows from PM_TABLE_MAP.md "
+print(f"Parsed {len(rows)} documented rows from 9800X3D_PM_TABLE_0x620105.md "
       f"covering {len({i for r in rows for i in r[0]})} float indices\n")
 
 # ---------------------------------------------------------------- measure

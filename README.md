@@ -182,7 +182,7 @@ not missing.
 
 ## What is actually known
 
-For the 9800X3D `0x620105` table, all 457 indices have a row in [PM_TABLE_MAP.md](docs/architectures/granite_ridge/PM_TABLE_MAP.md), but the rows carry
+For the 9800X3D `0x620105` table, all 457 indices have a row in [9800X3D_PM_TABLE_0x620105.md](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md), but the rows carry
 very different weight, and the confidence column says which is which:
 
 - **Cross-validated (strongest).** 14 automated checks compare PM fields against
@@ -197,16 +197,16 @@ very different weight, and the confidence column says which is which:
 - **Inferred.** Correlation and load response only. Treat as a hypothesis.
 - **Known wrong, and left in the map as such.** Several fields once marked CONFIRMED
   were disproved; the rows now say what they are *not*. See
-  [the honesty audit](docs/architectures/granite_ridge/PM_TABLE_MAP.md#honesty-audit-2026-07-30).
+  [the honesty audit](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#honesty-audit-2026-07-30).
 
 Open questions are tracked in [docs/TOFIX.md](docs/TOFIX.md); the EDC search is written
 up as
-[a negative result](docs/architectures/granite_ridge/PM_TABLE_MAP.md#edc_value--closed-negative-result-2026-07-30).
+[a negative result](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#edc_value--closed-negative-result-2026-07-30).
 
 ## Verifying the map
 
 The map is not trusted on its word. [`research/granite_ridge/mapping/audit_map.py`](research/granite_ridge/mapping/audit_map.py)
-parses `PM_TABLE_MAP.md` itself and asserts every mechanically checkable claim against
+parses `9800X3D_PM_TABLE_0x620105.md` itself and asserts every mechanically checkable claim against
 live hardware — static fields must not move under load, fields documented as zero must
 read zero, documented mirrors must be bit-identical, and cross-validated fields must
 match their system sensor within tolerance. It exits non-zero on any failure.
@@ -274,7 +274,7 @@ correction), `hunt_edc.py` (the exhaustive EDC search), `classify_unknown.py`,
 writes. See `research/README.md`.
 
 `dump_table_full.py` prints the whole table with each field's documented meaning and
-confidence, read from `PM_TABLE_MAP.md` itself.
+confidence, read from `9800X3D_PM_TABLE_0x620105.md` itself.
 
 ## Tests
 

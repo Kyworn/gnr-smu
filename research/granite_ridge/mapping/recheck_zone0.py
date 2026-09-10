@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Re-verify the zone 0x000 labels in PM_TABLE_MAP.md against hard ground truth.
+"""Re-verify the zone 0x000 labels in 9800X3D_PM_TABLE_0x620105.md against hard ground truth.
 
 Ground truth: RAPL package energy (W), k10temp Tctl/Tccd1 (degC).
 Hypothesis under test: zone 0x000 is the classic Zen (LIMIT, VALUE) pair layout

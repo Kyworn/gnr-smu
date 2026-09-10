@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dump the PM table, labelled from PM_TABLE_MAP.md.
+"""Dump the PM table, labelled from 9800X3D_PM_TABLE_0x620105.md.
 
 Modes are chosen by the hardware profile rather than by a flag:
 
@@ -32,7 +32,7 @@ from gnr_smu.hardware import get_hardware_profile, map_labels_supported  # noqa:
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                    "docs", "architectures", "granite_ridge",
-                   "PM_TABLE_MAP.md")
+                   "9800X3D_PM_TABLE_0x620105.md")
 
 ROW = re.compile(r"^\|\s*0x[0-9A-Fa-f]+(?:-0x[0-9A-Fa-f]+)?\s*\|"
                  r"\s*(\d+(?:-\d+)?)\s*\|")
@@ -87,14 +87,14 @@ def main():
                      for c in range(profile.cores)]
             print(f"# validated per-core temperatures (direct degrees C): "
                   f"{', '.join(f'd[{i}]' for i in lanes)}")
-        print("# raw values otherwise — the 9800X3D PM_TABLE_MAP.md does not apply here.")
+        print("# raw values otherwise — the 9800X3D 9800X3D_PM_TABLE_0x620105.md does not apply here.")
         print(f"# Please attach this dump and your CPU model to an issue.\n")
         for i, v in enumerate(floats):
             print(f"d[{i:3}] (0x{i * 4:03X}) = {v:14.4f}")
         return
 
     print(f"# {why}")
-    print("# meanings truncated — see PM_TABLE_MAP.md for the full row and evidence\n")
+    print("# meanings truncated — see 9800X3D_PM_TABLE_0x620105.md for the full row and evidence\n")
     lab = labels()
     for i, v in enumerate(floats):
         meaning, conf = lab.get(i, ("", ""))
