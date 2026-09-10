@@ -31,6 +31,7 @@ from gnr_smu.hardware import get_hardware_profile, map_labels_supported  # noqa:
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   "docs", "architectures", "granite_ridge",
                    "PM_TABLE_MAP.md")
 
 ROW = re.compile(r"^\|\s*0x[0-9A-Fa-f]+(?:-0x[0-9A-Fa-f]+)?\s*\|"

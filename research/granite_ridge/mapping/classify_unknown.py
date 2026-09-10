@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
-MAP = ROOT / "PM_TABLE_MAP.md"
+MAP = ROOT / "docs" / "architectures" / "granite_ridge" / "PM_TABLE_MAP.md"
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 N = 457
 

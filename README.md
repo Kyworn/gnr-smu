@@ -182,7 +182,7 @@ not missing.
 
 ## What is actually known
 
-For the 9800X3D `0x620105` table, all 457 indices have a row in [PM_TABLE_MAP.md](PM_TABLE_MAP.md), but the rows carry
+For the 9800X3D `0x620105` table, all 457 indices have a row in [PM_TABLE_MAP.md](docs/architectures/granite_ridge/PM_TABLE_MAP.md), but the rows carry
 very different weight, and the confidence column says which is which:
 
 - **Cross-validated (strongest).** 14 automated checks compare PM fields against
@@ -197,11 +197,11 @@ very different weight, and the confidence column says which is which:
 - **Inferred.** Correlation and load response only. Treat as a hypothesis.
 - **Known wrong, and left in the map as such.** Several fields once marked CONFIRMED
   were disproved; the rows now say what they are *not*. See
-  [the honesty audit](PM_TABLE_MAP.md#honesty-audit-2026-07-30).
+  [the honesty audit](docs/architectures/granite_ridge/PM_TABLE_MAP.md#honesty-audit-2026-07-30).
 
 Open questions are tracked in [docs/TOFIX.md](docs/TOFIX.md); the EDC search is written
 up as
-[a negative result](PM_TABLE_MAP.md#edc_value--closed-negative-result-2026-07-30).
+[a negative result](docs/architectures/granite_ridge/PM_TABLE_MAP.md#edc_value--closed-negative-result-2026-07-30).
 
 ## Verifying the map
 

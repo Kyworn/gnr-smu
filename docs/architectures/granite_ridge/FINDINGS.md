@@ -25,7 +25,7 @@ We migrated completely to the official [ryzen_smu](https://github.com/amkillam/r
 ## 3. PM Table — Map (v0x620105)
 
 Full size: `0x724` bytes. Fetched continuously alongside core metrics.
-For a complete variable-to-byte mapping, reference **[PM_TABLE_MAP.md](../../../PM_TABLE_MAP.md)**.
+For a complete variable-to-byte mapping, reference **[PM_TABLE_MAP.md](PM_TABLE_MAP.md)**.
 
 *Notable discoveries via Pearson Correlation + cross-validation:*
 - **iGPU Clock (sclk):** Offset `0x1B0` — validated vs amdgpu freq1_input.
@@ -53,7 +53,7 @@ Zone `0x000` is the standard Zen `(LIMIT, VALUE)` pair layout — `0x008`/`0x00C
 `0x020`/`0x024` = TDC, `0x028`/`0x02C` = THM. Each value shares the unit of the limit above
 it, which is what pins the identification. Every field in the table that *is* a temperature
 reads as direct °C; no decoding is required. Full measurements and the before/after label
-table are in [PM_TABLE_MAP.md](../../../PM_TABLE_MAP.md#re-verification-2026-07-30).
+table are in [PM_TABLE_MAP.md](PM_TABLE_MAP.md#re-verification-2026-07-30).
 
 ---
 
