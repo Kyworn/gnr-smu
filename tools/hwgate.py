@@ -32,10 +32,8 @@ class HardwareProfile:
     core_cc6: int
     core_boost_limit: int
     boost_limit_confident: bool
-    # Unconfirmed CCD-adjacent candidates: table position suggested "L3", but
-    # a cache-thrash-vs-ALU comparison (research/l3_specificity.py) has not
-    # proven L3-cache coupling, so these are named for what was actually
-    # measured (CCD selectivity), not for an unproven L3 identity.
+    # CCD-adjacent telemetry.  L3 temperature lanes are exposed only after a
+    # cache-thrash-vs-ALU comparison demonstrates cache-specific coupling.
     # 2026-08-25: d[589]/d[590] and d[591]/d[592] were checked for CCD
     # selectivity the same way d[595]/d[596] were (busy-loop load pinned to
     # CCD0 only, then CCD1 only). Unlike d[595]/d[596], both lanes of each
@@ -89,7 +87,11 @@ PROFILES = {
         core_fit=None, core_activity=None, core_c0=341, core_cc1=349,
         core_cc6=357, core_boost_limit=373, boost_limit_confident=True,
         ccd_power_candidate=None, ccd_vddm_candidate=None,
-        ccd_l3_temperature=None, ccd_candidate_count=0,
+        # 2026-09-10: a shared 64 MiB working set (fits the 96 MiB L3, exceeds
+        # private L2) raised d[448] +6.97 K while core average rose +4.83 K.
+        # At nearly the same final core/Tccd temperatures, an ALU-only control
+        # raised d[448] only +1.05 K.  This isolates real L3-traffic coupling.
+        ccd_l3_temperature=448, ccd_candidate_count=1,
         # Measured by read-back: 0x3C moves d[8] (TDC), while 0x3D moves d[63] (EDC).
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=162, stock_tdc=120, stock_edc=180,

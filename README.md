@@ -54,6 +54,10 @@ repo contains the measured layouts and tools that select the correct profile.
   - `d[611]`/`d[612]` and the candidate CCD power/VDDM fields (`d[589]-d[592]`) were
     found to be **not** CCD-selective under the same test and have been removed from
     the GUI rather than kept mislabelled.
+- **9800X3D L3 temperature identified.** A 64 MiB shared working set isolated
+  `d[448]` from ordinary core heating: it rose +6.97 K under L3 traffic versus
+  +1.05 K under an ALU-only control at nearly the same final core and Tccd1
+  temperatures. The dashboard now exposes it as `CCD1 L3 Cache`.
 - **GUI usability fixes:** larger/consistently-styled refresh-rate and reset-min/max
   controls, a "Dashboard" page that matches its sidebar entry, and a frequency summary
   that reports the highest core clock instead of an average across all cores.

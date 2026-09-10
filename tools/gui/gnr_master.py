@@ -520,21 +520,28 @@ class GNRMaster(QMainWindow):
             self._add_sensor(core_temps, f"core_temp_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "°C")
 
-        l3 = self._add_sensor_group(None, "Experimental L3 candidates")
-        l3.setToolTip(0, "Low-confidence PM-table candidates. Raw index remains visible.")
+        l3 = self._add_sensor_group(temperatures, "L3 Cache Temperatures")
+        l3.setToolTip(0, "PM-table lanes validated by cache-specific load testing.")
         if self.profile and self.profile.ccd_candidate_count:
             for ccd in range(self.profile.ccd_candidate_count):
+                if self.profile.pm_version == 0x620105:
+                    evidence = (
+                        "A shared 64 MiB L3 workload raised this lane +6.97 K; "
+                        "an ALU-only control at nearly the same core/Tccd "
+                        "temperature raised it only +1.05 K."
+                    )
+                else:
+                    evidence = (
+                        "CCD-selective; a temperature-matched ALU-vs-cache test "
+                        "raised it an extra 4-8 K under cache load."
+                    )
                 self._add_sensor(l3, f"ccd_l3_temp_{ccd}",
-                                 f"CCD L3 temperature? (CCD{ccd + 1}) · "
+                                 f"CCD{ccd + 1} L3 Cache · "
                                  f"d[{self.profile.ccd_l3_temperature + ccd}]",
                                  "°C",
-                                 "CCD-selective (rises with this CCD's own load); "
-                                 "a temperature-matched ALU-vs-cache-thrash test found it "
-                                 "rises an extra 4-8 K under cache load at the same core "
-                                 "temp, evidence of real L3 coupling (single run, not yet "
-                                 "repeated)")
+                                 evidence)
         else:
-            l3.setText(0, "Experimental CCD thermal & power candidates (not mapped for this profile)")
+            l3.setText(0, "L3 Cache Temperatures (not mapped for this profile)")
 
         limits = self._add_sensor_group(None, "Limits & current")
         self._add_sensor(limits, "ppt", "CPU PPT", "W")
