@@ -84,9 +84,17 @@ CLI's reset-to-stock sent 180 A to a TDC whose stock limit is 120 A.
 Surfaced by @tpoechtrager: his 9950X3D profile in PR #1 used the ZenStates order, and
 checking why it disagreed with ours is what exposed that ours had never been measured.
 
-### 4b. Curve Optimizer (MP1)
-- **0x50 to 0x57:** Per-core optimization (C0 to C7).
-- **ARG0 Format:** Signed 32-bit integer (e.g., -30 = `0xFFFFFFE2`). Write-only, requires local JSON caching for GUI persistence.
+### 4b. Curve Optimizer (MP1 write, RSMU read)
+- **MP1 0x50 to 0x57:** Per-core writes for C0 to C7 on the 9800X3D.
+- **Write ARG0:** Signed 32-bit integer (e.g. -30 = `0xFFFFFFE2`).
+- **RSMU 0xD5:** `GetDldoPsmMargin`, with `[31:28]` CCD and `[23:20]` core in
+  ARG0. The returned signed margin is in the low 16 bits of ARG0.
+
+The read command is the Zen 4/5 desktop mapping used by ZenStates-Core. It was
+validated on this 9800X3D on 2026-09-10: all eight queries returned `RSP=1` and
+`0xFFFFFFE2` (-30), matching the BIOS configuration. This reads the active firmware
+state, so it also reflects a later runtime override. A persistent JSON cache is not a
+readback and is no longer used for CO values.
 
 ### 4c. MSG IDs 0x58–0x6F — Exploration Result
 

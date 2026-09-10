@@ -25,7 +25,7 @@ class HardwareProfile:
     core_voltage: int
     core_temp: int
     core_frequency: Optional[int]
-    core_fit: int
+    core_fit: Optional[int]
     core_activity: Optional[int]
     core_c0: Optional[int]
     core_cc1: Optional[int]
@@ -69,6 +69,10 @@ class HardwareProfile:
     max_tdc: int = 0
     max_edc: int = 0
     co_msg: int = 0
+    # Granite Ridge exposes the active per-core Curve Optimizer value through
+    # the read-only RSMU GetDldoPsmMargin command.  This is separate from the
+    # profile-specific MP1 write path above.
+    co_get_msg: int = 0
     allow_smu_writes: bool = False
     ccd_shared_temperature: Optional[int] = None
     edc_value: Optional[int] = None
@@ -82,8 +86,8 @@ PROFILES = {
     (0x620105, 1828, 8): HardwareProfile(
         "AMD Ryzen 7 9800X3D", "AMD Ryzen 7 9800X3D", 0x620105, 1828, 8,
         core_power=333, core_voltage=309, core_temp=317, core_frequency=325,
-        core_fit=341, core_activity=357, core_c0=None, core_cc1=None,
-        core_cc6=349, core_boost_limit=373, boost_limit_confident=True,
+        core_fit=None, core_activity=None, core_c0=341, core_cc1=349,
+        core_cc6=357, core_boost_limit=373, boost_limit_confident=True,
         ccd_power_candidate=None, ccd_vddm_candidate=None,
         ccd_l3_temperature=None, ccd_candidate_count=0,
         # Measured by read-back: 0x3C moves d[8] (TDC), while 0x3D moves d[63] (EDC).
@@ -93,6 +97,7 @@ PROFILES = {
         rsmu_smn=(0x3B10524, 0x3B10570, 0x3B10A40),
         max_ppt=250, max_tdc=200, max_edc=250,
         co_mode="legacy_per_message",
+        co_get_msg=0xD5,
         allow_smu_writes=True,
     ),
     (0x620205, 2452, 16): HardwareProfile(
@@ -141,6 +146,7 @@ PROFILES = {
         stock_ppt=200, stock_tdc=160, stock_edc=225,
         max_ppt=300, max_tdc=250, max_edc=300,
         co_mode="packed_core_mask", co_msg=0x35,
+        co_get_msg=0xD5,
         allow_smu_writes=True,
         # d[64] sits right after EDC_LIMIT (d[63]) and behaves like the
         # missing EDC_VALUE: idle ~7 A, rises to ~128 A under all-core load,
@@ -164,11 +170,12 @@ PROFILES = {
 BLOCKED_MP1_IDS = frozenset({0x10} | set(range(0x03, 0x0E)) | set(range(0x58, 0x70)))
 
 # RSMU is the other mailbox, and "not on the MP1 list" is not the same statement as
-# "safe on RSMU". Only the two table commands are established here — 0x04 returns the
-# PM table's DRAM address and 0x05 triggers the transfer — so RSMU runs as an
-# allowlist rather than a blocklist. docs/FINDINGS.md records the driver itself
-# rejecting the 0x58-0x6F range on this endpoint.
-RSMU_ALLOWED_IDS = frozenset({0x04, 0x05})
+# "safe on RSMU". RSMU therefore runs as an allowlist rather than a blocklist.
+# docs/FINDINGS.md records the driver itself rejecting the 0x58-0x6F range on
+# this endpoint.
+# 0x04/0x05 transfer the PM table. 0xD5 is GetDldoPsmMargin, the read-only
+# Curve Optimizer query used by ZenStates-Core on Zen 4/5 desktop parts.
+RSMU_ALLOWED_IDS = frozenset({0x04, 0x05, 0xD5})
 
 MAILBOXES = ("mp1", "rsmu")
 
@@ -190,7 +197,7 @@ def msg_id_blocked(msg_id, mailbox="mp1"):
     if mailbox == "rsmu":
         if msg_id in RSMU_ALLOWED_IDS:
             return False, None
-        return True, (f"RSMU 0x{msg_id:02x} is not one of the established table "
+        return True, (f"RSMU 0x{msg_id:02x} is not one of the established read-only "
                       f"commands ({', '.join(f'0x{i:02x}' for i in sorted(RSMU_ALLOWED_IDS))})")
     if 0x58 <= msg_id <= 0x6F:
         return True, (f"MSG 0x{msg_id:02x} freezes MP1 on Granite Ridge — no response, "
@@ -347,6 +354,59 @@ def curve_optimizer_command(profile, core, margin):
     raise ValueError(f"unsupported CO command mode: {profile.co_mode}")
 
 
+def curve_optimizer_read_command(profile, core):
+    """Return the read-only RSMU ``(message, arg0)`` for one physical core."""
+    if not 0 <= core < profile.cores:
+        raise ValueError(f"core {core} outside 0..{profile.cores - 1}")
+    if not profile.co_get_msg:
+        raise ValueError(f"Curve Optimizer readback is not mapped for {profile.name}")
+    # Zen 3+: [31:28] CCD, [23:20] core-within-CCD. The low 16 bits are zero
+    # for a query and are replaced by the signed margin in the response.
+    core_mask = (core // 8) << 28 | (core % 8) << 20
+    return profile.co_get_msg, core_mask
+
+
+def decode_curve_optimizer_response(value):
+    """Decode the signed Curve Optimizer margin returned in RSMU arg0."""
+    raw = value & 0xFFFF
+    return raw if raw < 0x8000 else raw - 0x10000
+
+
+def read_curve_optimizer_offsets(profile, sysfs_base="/sys/kernel/ryzen_smu_drv"):
+    """Read every active per-core CO margin through RSMU GetDldoPsmMargin.
+
+    Although the operation is read-only at the firmware level, the ryzen_smu
+    protocol writes the query argument and command ID to sysfs first, so this
+    normally requires root. Any rejected/truncated response fails closed.
+    """
+    args_path = f"{sysfs_base}/smu_args"
+    cmd_path = f"{sysfs_base}/rsmu_cmd"
+    offsets = []
+    for core in range(profile.cores):
+        msg_id, arg0 = curve_optimizer_read_command(profile, core)
+        blocked, reason = msg_id_blocked(msg_id, mailbox="rsmu")
+        if blocked:
+            raise RuntimeError(reason)
+        with open(args_path, "wb") as f:
+            f.write(struct.pack("<6I", arg0, 0, 0, 0, 0, 0))
+        with open(cmd_path, "wb") as f:
+            f.write(struct.pack("<I", msg_id))
+        with open(cmd_path, "rb") as f:
+            response = f.read(4)
+        with open(args_path, "rb") as f:
+            response_args = f.read(24)
+        if len(response) != 4 or len(response_args) != 24:
+            raise RuntimeError(f"truncated Curve Optimizer response for core {core}")
+        status = struct.unpack("<I", response)[0]
+        if status != 1:
+            raise RuntimeError(
+                f"Curve Optimizer read rejected for core {core}: RSMU status 0x{status:02X}"
+            )
+        returned_arg0 = struct.unpack("<6I", response_args)[0]
+        offsets.append(decode_curve_optimizer_response(returned_arg0))
+    return offsets
+
+
 def map_labels_supported():
     """The full PM_TABLE_MAP.md is currently the 9800X3D/457-float map."""
     profile, _ = get_hardware_profile()
@@ -409,16 +469,24 @@ if __name__ == "__main__":
         assert not msg_id_blocked(allowed_id)[0], f"0x{allowed_id:02x} must be allowed"
 
     # A different mailbox is a different ID namespace: RSMU 0x04/0x05 read the PM
-    # table and must not inherit the MP1 list. But RSMU is an allowlist, so an ID that
-    # merely escapes the MP1 list does not get through either.
-    for rsmu_id in (0x04, 0x05):
+    # table and 0xD5 reads Curve Optimizer. They must not inherit the MP1 list. But
+    # RSMU is an allowlist, so an ID that merely escapes the MP1 list does not pass.
+    for rsmu_id in (0x04, 0x05, 0xD5):
         assert not msg_id_blocked(rsmu_id, mailbox="rsmu")[0], \
-            f"RSMU 0x{rsmu_id:02x} is an established table command"
+            f"RSMU 0x{rsmu_id:02x} is an established read-only command"
     for rsmu_id in (0x3C, 0x5D, 0x00, 0x70):
         assert msg_id_blocked(rsmu_id, mailbox="rsmu")[0], \
             f"RSMU 0x{rsmu_id:02x} is not established and must not pass"
 
     probe_profile = PROFILES[(0x620105, 1828, 8)]
+    assert (probe_profile.core_c0, probe_profile.core_cc1,
+            probe_profile.core_cc6) == (341, 349, 357), \
+        "9800X3D must expose the three measured C-state blocks directly"
+    assert probe_profile.core_fit is None and probe_profile.core_activity is None, \
+        "9800X3D C-state lanes must not also be presented as FIT/activity"
+    assert curve_optimizer_read_command(probe_profile, 0) == (0xD5, 0)
+    assert curve_optimizer_read_command(probe_profile, 7) == (0xD5, 7 << 20)
+    assert decode_curve_optimizer_response(0xFFFFFFE2) == -30
     assert payload_allowed(probe_profile, 0x3E, 162_000)[0], "stock PPT must pass"
     assert payload_allowed(probe_profile, 0x3E, 250_000)[0], "the ceiling itself passes"
     assert not payload_allowed(probe_profile, 0x3E, 0)[0], "PPT 0 W locks the CPU"

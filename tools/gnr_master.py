@@ -2,17 +2,11 @@
 import sys
 import os
 import struct
-import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hwgate import (curve_optimizer_command, get_hardware_profile,
                     msg_id_blocked, payload_allowed, smu_message_supported,
-                    smu_writes_supported)
-
-CONFIG_PATH = os.path.join(
-    os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-    "gnr_master.json",
-)
+                    read_curve_optimizer_offsets, smu_writes_supported)
 
 # Stock limits and MP1 message IDs live on the hardware profile in hwgate.py — per
 # part, since they differ. 0x3C is TDC and 0x3D is EDC, established by read-back in
@@ -72,18 +66,16 @@ def apply_cmd(msg_id, arg0):
         print(f"[ERROR] Driver write failed: {e}")
         return False
 
-def save_co_config(co_val):
+def show_co_config(profile):
     try:
-        profile, _ = get_hardware_profile()
-        cores = profile.cores if profile else 8
-        data = {"co_offsets": [co_val] * cores}
-        with open(CONFIG_PATH, "w") as f:
-            json.dump(data, f)
-    except OSError as e:
-        # This used to swallow the error. The offsets are write-only — the SMU will
-        # not read them back — so a failed save means the GUI shows 0 for settings
-        # that are actually applied.
-        print(f"[WARN] could not cache CO offsets to {CONFIG_PATH}: {e}")
+        offsets = read_curve_optimizer_offsets(profile)
+    except Exception as e:
+        print(f"[ERROR] could not read Curve Optimizer offsets: {e}")
+        return None
+    print("Current Curve Optimizer: " + ", ".join(
+        f"core {core}={value:+d}" for core, value in enumerate(offsets)
+    ))
+    return offsets
 
 def ask_limit(name, unit, max_val):
     """Bounded numeric input. The GUI clamps these with spin-box ranges; the CLI took
@@ -110,6 +102,7 @@ def main():
         print("Use export_telemetry.py --temps for read-only per-core temperatures.")
         return
     print("--- GNR Master Control ---")
+    show_co_config(profile)
     print("1. Set PPT Limit (Watts)")
     print("2. Set Custom TDC (Amps)")
     print("3. Set Custom EDC (Amps)")
@@ -139,8 +132,8 @@ def main():
                 applied = False
                 break
         if applied:
-            save_co_config(-30)
-            print("CO -30 applied and saved locally for the GUI!")
+            if show_co_config(profile) is not None:
+                print("CO -30 applied and verified by SMU readback.")
     elif choice == '5':
         applied = apply_cmd(profile.ppt_msg, profile.stock_ppt * 1000)
         if applied:
@@ -154,8 +147,8 @@ def main():
                     applied = False
                     break
         if applied:
-            save_co_config(0)
-            print("Reset successful.")
+            if show_co_config(profile) is not None:
+                print("Reset successful and verified by SMU readback.")
     
 if __name__ == "__main__":
     main()

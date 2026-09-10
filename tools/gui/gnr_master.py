@@ -18,6 +18,7 @@ CONFIG_PATH = os.path.join(
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from hwgate import (curve_optimizer_command, get_hardware_profile,
                     hardware_supported, msg_id_blocked, payload_allowed,
+                    read_curve_optimizer_offsets,
                     smu_message_supported,
                     smu_writes_supported)  # noqa: E402
 
@@ -237,7 +238,7 @@ class GNRMaster(QMainWindow):
         # guardrails already block writes there, so this only affects what is shown.
         limits = self._read_pm_limits()
         self.current_ppt, self.current_tdc, self.current_edc = limits or (None, None, None)
-        self.current_co = self.load_co_config()
+        self.current_co = self.read_co_offsets()
         self.core_cpu_ids = physical_core_cpu_ids()
 
         self._build_interface()
@@ -246,6 +247,11 @@ class GNRMaster(QMainWindow):
         self.log_msg(
             "Dashboard initialized. Listening to kernel logs...", "STATUS", ACCENT_GREEN
         )
+        if getattr(self, "_co_read_error", None):
+            self.log_msg(
+                f"Curve Optimizer readback unavailable: {self._co_read_error}",
+                "ERROR", ACCENT_RED,
+            )
 
         self.log_worker = KernelLogWorker()
         self.log_worker.log_signal.connect(
@@ -590,13 +596,14 @@ class GNRMaster(QMainWindow):
             self._add_sensor(ccd_summary, f"ccd_cc6_{ccd}", f"CCD{ccd + 1} CC6 residency", "%",
                              current_color=ACCENT_PURPLE)
 
-        fit_group = self._add_sensor_group(residency, "FIT / related metric")
-        for core in range(self.core_count):
-            ccd = core // 8 + 1
-            self._add_sensor(fit_group, f"core_fit_{core}",
-                             f"Core {core} FIT-related metric (CCD{ccd})", "",
-                             "Per-core PM-table FIT/related metric; not a direct temperature or voltage reading.",
-                             ACCENT_ORANGE)
+        if self.profile is None or self.profile.core_fit is not None:
+            fit_group = self._add_sensor_group(residency, "FIT / related metric")
+            for core in range(self.core_count):
+                ccd = core // 8 + 1
+                self._add_sensor(fit_group, f"core_fit_{core}",
+                                 f"Core {core} FIT-related metric (CCD{ccd})", "",
+                                 "Per-core PM-table FIT/related metric; not a direct temperature or voltage reading.",
+                                 ACCENT_ORANGE)
 
         c0_group = self._add_sensor_group(
             residency, "C0 residency · active cores" if has_direct_c0 else "Active/load estimate · 100 - CC6"
@@ -619,9 +626,13 @@ class GNRMaster(QMainWindow):
             self._add_sensor(cc6_group, f"core_cc6_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "%",
                              current_color=ACCENT_PURPLE)
-        co_config = self._add_sensor_group(None, "Configured Curve Optimizer")
+        co_config = self._add_sensor_group(None, "Curve Optimizer · active SMU value")
         for core in range(self.core_count):
-            self._add_sensor(co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int")
+            self._add_sensor(
+                co_config, f"co_{core}", f"Core {core} (CCD{core // 8 + 1})", "int",
+                "Active value read through RSMU GetDldoPsmMargin (0xD5) at startup "
+                "and before/after changes from this application.",
+            )
     def _format_sensor_value(self, value, unit):
         if value is None:
             return "--"
@@ -711,7 +722,12 @@ class GNRMaster(QMainWindow):
         try:
             with open(CONFIG_PATH, "r") as f:
                 data = json.load(f)
-            return data if isinstance(data, dict) else {}
+            if not isinstance(data, dict):
+                return {}
+            # CO is now read from the SMU. Never retain the former local cache,
+            # which could become stale after a reboot or BIOS change.
+            data.pop("co_offsets", None)
+            return data
         except Exception:
             return {}
 
@@ -786,16 +802,24 @@ class GNRMaster(QMainWindow):
         self._save_sensor_preferences()
         super().closeEvent(event)
 
-    def load_co_config(self):
+    def read_co_offsets(self):
         try:
-            offsets = self.config.get("co_offsets", [])
-            return (offsets + [0] * self.core_count)[:self.core_count]
-        except Exception:
-            pass
-        return [0] * self.core_count
+            offsets = read_curve_optimizer_offsets(self.profile)
+            self._co_read_error = None
+            return offsets
+        except Exception as e:
+            self._co_read_error = str(e)
+            return [None] * self.core_count
 
-    def save_co_config(self):
-        self._save_config({"co_offsets": self.current_co})
+    def refresh_co_values(self):
+        try:
+            self.current_co = read_curve_optimizer_offsets(self.profile)
+            self._co_read_error = None
+            return True
+        except Exception as e:
+            self._co_read_error = str(e)
+            self.current_co = [None] * self.core_count
+            return False
 
     def send_smu_cmd(self, msg_id, arg0=0):
         ok, why = smu_writes_supported()
@@ -906,6 +930,13 @@ class GNRMaster(QMainWindow):
     def open_core_control(self):
         if not self._smu_controls_available():
             return
+        if not self.refresh_co_values():
+            self.log_msg(
+                f"Curve Optimizer readback unavailable; refusing to prefill controls: "
+                f"{getattr(self, '_co_read_error', 'unknown error')}",
+                "ERROR", ACCENT_RED,
+            )
+            return
         dlg = CoreControlDialog(self.current_co, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             changed = [(i, spin.value()) for i, spin in enumerate(dlg.spins)
@@ -920,11 +951,16 @@ class GNRMaster(QMainWindow):
                     self.current_co[core] = value
                     applied.append(core)
             if applied:
-                self.save_co_config()
-                self.log_msg(
-                    f"CO offsets applied and cached for cores {applied}: "
-                    f"{self.current_co}", "STATUS", ACCENT_GREEN,
-                )
+                if self.refresh_co_values():
+                    self.log_msg(
+                        f"CO offsets applied and verified for cores {applied}: "
+                        f"{self.current_co}", "STATUS", ACCENT_GREEN,
+                    )
+                else:
+                    self.log_msg(
+                        f"CO writes succeeded for cores {applied}, but readback failed: "
+                        f"{self._co_read_error}", "ERROR", ACCENT_RED,
+                    )
 
     def _read_pm_limits(self):
         # Fallback comes from the profile, not from a copy of the 9800X3D's numbers:
@@ -1036,7 +1072,8 @@ class GNRMaster(QMainWindow):
             self._set_sensor(f"core_clock_{core}", freq)
             self._set_sensor(f"core_power_{core}", d[self.profile.core_power + core])
             self._set_sensor(f"core_voltage_{core}", d[self.profile.core_voltage + core])
-            self._set_sensor(f"core_fit_{core}", d[self.profile.core_fit + core])
+            if self.profile.core_fit is not None:
+                self._set_sensor(f"core_fit_{core}", d[self.profile.core_fit + core])
             self._set_sensor(f"core_cc6_{core}", d[self.profile.core_cc6 + core])
             self._set_sensor(f"co_{core}", self.current_co[core])
             if self.profile.core_c0 is not None:

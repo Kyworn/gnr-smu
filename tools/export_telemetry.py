@@ -89,7 +89,8 @@ def named_fields(profile):
             fields.append(
                 (f"c{core}_frequency", profile.core_frequency + core, "GHz")
             )
-        fields.append((f"c{core}_fit", profile.core_fit + core, "metric"))
+        if profile.core_fit is not None:
+            fields.append((f"c{core}_fit", profile.core_fit + core, "metric"))
         if profile.core_activity is not None:
             activity_name = (f"c{core}_activity_metric"
                              if profile.core_c0 is not None

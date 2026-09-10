@@ -330,15 +330,15 @@ followed by its live value in the *same* unit. See
 |--------|-----|---------|---------|------------|
 | 0x534-0x550 | 333-340 | 0.2-0.4 idle / 5.3 load | N | **Core Power (W) [8]** — monotonic in load, but the 8 values sum to only ~43 W against 124 W package, so the scope (core only? one voltage domain?) is not pinned | HIGH (was CONFIRMED) |
 
-### Core FIT / Current
+### Core C0 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x554-0x570 | 341-348 | 5-8 idle / 100 load | N | **Core FIT / IDD Max (%) [8]** — saturates at exactly 100.00 under load | CONFIRMED |
+| 0x554-0x570 | 341-348 | 5-8 idle / 100 load | N | **Core C0 Residency (%) [8]** — complements `d[349..356]` to 100.00 per core and saturates under load | CONFIRMED |
 
-### Core C6 Residency (%)
+### Core CC1 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x574-0x590 | 349-356 | 11-92 idle / 0.0 load | N | **Core C6 Residency (%) [8]** | CONFIRMED as a per-core idle-residency metric (exactly 0 under all-core load); the absolute idle value is not reproducible and is **not** the kernel's C-state residency |
+| 0x574-0x590 | 349-356 | 11-92 idle / 0.0 load | N | **Core CC1 Residency (%) [8]** — complements C0 `d[341..348]` to 100.00 per core | CONFIRMED |
 
 The idle figure has no fixed value. The map first recorded 84-93 % as if it were a
 property of the field, and `audit_map.py` checked `> 50 %` against it; that gate failed
@@ -354,10 +354,9 @@ the same windows on a quiet desktop:
 | 87.9 % | 68.6 % | 52 92 93 90 6 92 92 30 |
 | 88.7 % | 70.8 % | 50 93 85 92 67 89 32 58 |
 
-Same ballpark, with the PM field running 10-20 points below — expected, because the
-kernel counts time the governor spent *in* the C3 state per thread, while CC6 needs both
-SMT siblings idle simultaneously and for long enough to be worth power-gating. So it is
-a corroboration, not a calibration.
+This is not a valid CC6 cross-check: the exact C0 complement establishes this field
+as CC1. The kernel comparison is retained only as an observation about idle
+accounting, not as evidence for a C-state label.
 
 Two things make it useless as a tight gate:
 
@@ -374,10 +373,10 @@ Two things make it useless as a tight gate:
 So the audit gates only on what is a property of the field: ~0 with every core pinned,
 clearly above that at idle.
 
-### Core C0 Residency (%)
+### Core CC6 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
 |--------|-----|---------|---------|------------|
-| 0x594-0x5B0 | 357-364 | 0-16 idle / 0.0 load | N | **Not** C0 residency — reads up to 16 at *idle* and exactly 0 under all-core load, i.e. the opposite of C0. Behaves like a light-C-state residency | LOW (was "Core C0 Residency (%)" / CONFIRMED) |
+| 0x594-0x5B0 | 357-364 | 0-16 idle / 0.0 load | N | **Core CC6 Residency (%) [8]** — separate deep-idle lane; falls to 0 under all-core load | HIGH |
 
 ### Core C1 Residency (%)
 | Offset | Idx | Typical | Meaning | Confidence |
@@ -499,8 +498,8 @@ signal. Their old "thermal" labels were part of the zone 0x000 misdiagnosis.
 ### Inverse Couplings (A↑ when B↓)
 | Pair | Behavior |
 |------|----------|
-| d[341-348] FIT/IDD ↑ | d[349-356] C6 Residency ↓ (perfect inverse under stress) |
-| d[341-348] FIT/IDD ↑ | d[357-364] C0 Residency ↑ (tracks together) |
+| d[341-348] C0 Residency ↑ | d[349-356] CC1 Residency ↓ (perfect inverse under stress) |
+| d[357-364] CC6 Residency ↓ | reaches 0 under all-core load |
 | d[212] power credit ↑ | d[452] rolling counter ↓ (neither is an energy total — see the row notes) |
 
 ### Correlated Domains (Pearson > 0.99)
@@ -509,7 +508,7 @@ signal. Their old "thermal" labels were part of the zone 0x000 misdiagnosis.
 | Thermal cluster | d[11,270,317-324,448,449] | Tctl, hotspot and per-core temps track together (d[3,26,277] are watts, not temps) |
 | Power cluster | d[17,20,21,50,51,56,273,333-340] | All power metrics track together |
 | Energy cluster | d[212,397-404,453] | All track together, but as load-proportional rates that plateau — not accumulators |
-| Load cluster | d[301-308,341-348] | IDD and FIT track with load |
+| Load cluster | d[301-308,341-348] | Per-core power and C0 residency track with load |
 
 ### Ghost Floats (never change under any condition)
 Measured 2026-07-30 with a median over 25 samples at idle and at 45 s of `stress-ng --cpu 16`
@@ -546,9 +545,9 @@ Validated by comparing PM table values against `k10temp`, `amdgpu`, `spd5118`, `
 | d[108] iGPU sclk | 647MHz | amdgpu freq1 | 600MHz | YES (PM more precise) |
 | d[317-324] Core temps | 37-40°C | k10temp range | reasonable | YES |
 | d[20] Pkg Power | 14.8-110W | stress profile | coherent | YES |
-| d[349-356] C6 Residency | 93%→0.5% | stress-ng load | perfect inverse; idle value is background-dependent, see above | YES |
+| d[349-356] CC1 Residency | 93%→0.5% | stress-ng load | exact complement of C0; idle value is background-dependent, see above | YES |
 | d[333-340] Core Power | 0.4→5.4W | Pkg Power split | coherent | YES |
-| d[554-570] FIT/IDD | 7→99% | full load | coherent | YES |
+| d[341-348] C0 Residency | 7→99% | full load | exact complement of CC1 | YES |
 | d[11] 0x02C Tctl | 49.3→82.8°C | k10temp Tctl | 49.4→84.0°C | YES — see the read-order note below |
 | d[270] 0x438 hotspot | 51.8→87.2°C | k10temp Tctl | 49.4→84.0°C | YES (slope 1.02, sits ~3°C above Tctl) |
 | d[3] 0x00C PPT value | 27.9→128.2W | PPT limit d[2]=162W | ceiling respected | YES (it is watts, not °C) |
