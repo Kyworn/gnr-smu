@@ -8,9 +8,9 @@ import os
 import sys
 import unittest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from hwgate import PROFILES  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 
 class TestGraniteRidgeMaps(unittest.TestCase):
@@ -58,7 +58,7 @@ class TestGraniteRidgeMaps(unittest.TestCase):
                                  p.core_temp + core)
 
     def test_granite_ridge_writes_still_allowed(self):
-        from hwgate import smu_message_supported
+        from gnr_smu.safety import smu_message_supported
         for key in ((0x620105, 1828, 8), (0x620205, 2452, 16)):
             p = PROFILES[key]
             self.assertTrue(p.allow_smu_writes)

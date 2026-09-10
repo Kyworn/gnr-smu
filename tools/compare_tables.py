@@ -2,8 +2,8 @@
 """Compare community PM-table bundles: layout vs layout, index vs index.
 
 Usage:
-  python3 research/compare_tables.py bundleA bundleB [bundleC ...]
-  python3 research/compare_tables.py --block 172 --block 180 --block 212 bundleA bundleB
+  python3 tools/compare_tables.py bundleA bundleB [bundleC ...]
+  python3 tools/compare_tables.py --block 172 --block 180 --block 212 bundleA bundleB
 
 Each bundle is a directory from tools/submit_dump.py (meta.json + *.bin).
 Comparison is only meaningful within one (pm_version, size); mixed versions
@@ -30,9 +30,10 @@ import os
 import struct
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                "..", "tools"))
-from hwgate import PROFILES, detect_active_slots  # noqa: E402
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from gnr_smu.hardware import detect_active_slots  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 
 def load_bundle(path):

@@ -11,16 +11,14 @@ Run: python3 tools/validate_core_temps.py
 import argparse
 import glob
 import os
-from pathlib import Path
 import statistics
 import struct
 import subprocess
 import sys
 import time
-
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-from hwgate import get_hardware_profile  # noqa: E402
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 

@@ -25,9 +25,9 @@ import subprocess
 import sys
 import time
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-from hwgate import get_hardware_profile  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 WATCH = list(range(589, 613))  # whole per-CCD L3 block

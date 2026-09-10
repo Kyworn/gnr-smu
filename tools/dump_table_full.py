@@ -25,8 +25,9 @@ import re
 import struct
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hwgate import get_hardware_profile, map_labels_supported  # noqa: E402
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from gnr_smu.hardware import get_hardware_profile, map_labels_supported  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 MAP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

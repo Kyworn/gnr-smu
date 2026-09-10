@@ -3,10 +3,14 @@ import sys
 import os
 import struct
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hwgate import (curve_optimizer_command, get_hardware_profile,
-                    msg_id_blocked, payload_allowed, smu_message_supported,
-                    read_curve_optimizer_offsets, smu_writes_supported)
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.safety import (curve_optimizer_command,  # noqa: E402
+                            msg_id_blocked, payload_allowed,
+                            smu_message_supported,
+                            read_curve_optimizer_offsets,
+                            smu_writes_supported)
 
 # Stock limits and MP1 message IDs live on the hardware profile in hwgate.py — per
 # part, since they differ. 0x3C is TDC and 0x3D is EDC, established by read-back in

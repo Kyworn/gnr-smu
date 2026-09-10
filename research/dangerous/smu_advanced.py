@@ -11,10 +11,10 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "tools"))
-from hwgate import (get_hardware_profile, msg_id_blocked,
-                    smu_writes_supported)  # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.safety import (msg_id_blocked,
+                            smu_writes_supported)  # noqa: E402
 
 
 def guard(msg_id, mailbox="mp1"):

@@ -12,13 +12,16 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
-import hwgate  # noqa: E402
-from hwgate import (GLOBAL_FIELD_NAMES, PROFILES, curve_optimizer_command,  # noqa: E402
-                    get_hardware_profile, read_curve_optimizer_offsets,
-                    smu_message_supported, smu_writes_supported,
-                    validate_profile_globals)
+from gnr_smu import hardware as hwgate  # noqa: E402
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import (GLOBAL_FIELD_NAMES, PROFILES,  # noqa: E402
+                              validate_profile_globals)
+from gnr_smu.safety import (curve_optimizer_command,  # noqa: E402
+                            read_curve_optimizer_offsets,
+                            smu_message_supported, smu_writes_supported)
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "vermeer")
 VERMEER = PROFILES[(0x380905, 1488, 6)]
@@ -290,14 +293,14 @@ class TestFusedLayoutGuard(unittest.TestCase):
         return path
 
     def test_valid_layout_passes(self):
-        from hwgate import _fused_layout_matches
+        from gnr_smu.hardware import _fused_layout_matches
         ok, _ = _fused_layout_matches(VERMEER, self._write_pm())
         self.assertTrue(ok)
 
     def test_live_fused_slot_refuses(self):
         # Another chip with slots 2-3 actually present must not be
         # mislabelled: a nonzero fused lane refuses the profile.
-        from hwgate import _fused_layout_matches
+        from gnr_smu.hardware import _fused_layout_matches
         ok, why = _fused_layout_matches(
             VERMEER, self._write_pm(lambda r: r.__setitem__(214, 3.7)))
         self.assertFalse(ok)
@@ -306,7 +309,7 @@ class TestFusedLayoutGuard(unittest.TestCase):
     def test_dead_mapped_lane_refuses(self):
         # ... and a mapped lane reading 0.0 refuses too (fail closed both
         # ways), e.g. a dual-CCD SKU exposing a different CCD.
-        from hwgate import _fused_layout_matches
+        from gnr_smu.hardware import _fused_layout_matches
         ok, why = _fused_layout_matches(
             VERMEER, self._write_pm(lambda r: r.__setitem__(212, 0.0)))
         self.assertFalse(ok)
@@ -315,7 +318,7 @@ class TestFusedLayoutGuard(unittest.TestCase):
     def test_other_blocks_checked_too(self):
         # The signature spans power/voltage/frequency: corrupting a fused
         # lane in any of them refuses, even with the frequency block intact.
-        from hwgate import _fused_layout_matches
+        from gnr_smu.hardware import _fused_layout_matches
         for base in (172, 180):
             ok, _ = _fused_layout_matches(
                 VERMEER, self._write_pm(lambda r, b=base: r.__setitem__(b + 2,
@@ -399,7 +402,7 @@ class TestGlobalNames(unittest.TestCase):
 
     def test_gui_requests_are_canonical(self):
         import ast
-        gui = os.path.join(os.path.dirname(__file__), "..", "tools",
+        gui = os.path.join(os.path.dirname(__file__), "..", "gnr_smu",
                            "gui", "gnr_master.py")
         with open(gui) as f:
             tree = ast.parse(f.read())

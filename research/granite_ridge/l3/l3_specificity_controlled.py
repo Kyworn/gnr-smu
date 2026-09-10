@@ -30,9 +30,9 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-from hwgate import get_hardware_profile  # noqa: E402
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 WATCH = [595, 596, 611, 612]

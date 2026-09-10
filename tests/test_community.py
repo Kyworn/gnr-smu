@@ -12,10 +12,11 @@ import sys
 import tempfile
 import unittest
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "research"))
 
-from hwgate import PROFILES, detect_active_slots  # noqa: E402
+from gnr_smu.hardware import detect_active_slots  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 import compare_tables  # noqa: E402
 
