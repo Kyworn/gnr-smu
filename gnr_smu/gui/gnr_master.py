@@ -656,6 +656,7 @@ class GNRMaster(QMainWindow):
                 self._add_sensor(ccd_summary, f"ccd_cc1_{ccd}", f"CCD{ccd + 1} CC1 residency", "%",
                                  current_color=ACCENT_CYAN)
             self._add_sensor(ccd_summary, f"ccd_cc6_{ccd}", f"CCD{ccd + 1} CC6 residency", "%",
+                             self._block_tooltip("core_cc6"),
                              current_color=ACCENT_PURPLE)
 
         if self.profile is None or self.profile.core_fit is not None:
@@ -687,6 +688,7 @@ class GNRMaster(QMainWindow):
         for core in range(self.core_count):
             self._add_sensor(cc6_group, f"core_cc6_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "%",
+                             self._block_tooltip("core_cc6"),
                              current_color=ACCENT_PURPLE)
         # The CO readback performs sysfs writes (smu_args/rsmu_cmd), so it is
         # only built where SMU queries are validated.  On write-blocked
