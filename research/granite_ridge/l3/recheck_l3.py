@@ -92,14 +92,22 @@ def k10_med(sensors, name):
 
 
 def load_cpus(cpus):
-    return [subprocess.Popen(
-        ["taskset", "-c", str(cpu), sys.executable, "-c", "while True: pass"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for cpu in cpus]
+    workers = []
+    try:
+        for cpu in cpus:
+            workers.append(subprocess.Popen(
+                ["taskset", "-c", str(cpu), sys.executable, "-c", "while True: pass"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    except BaseException:
+        stop(workers)
+        raise
+    return workers
 
 
 def stop(workers):
     for w in workers:
-        w.terminate()
+        if w.poll() is None:
+            w.terminate()
     for w in workers:
         w.wait()
 

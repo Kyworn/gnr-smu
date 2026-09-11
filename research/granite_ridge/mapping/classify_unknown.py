@@ -75,17 +75,15 @@ def measure(threads):
         try:
             time.sleep(25)
             s = [table() for _ in range(20) if not time.sleep(0.25)]
+            p.wait()
         except BaseException:
-            p.terminate()
+            if p.poll() is None:
+                p.terminate()
             p.wait()
             raise
-        p.wait()
         time.sleep(30)
         return s
     s = [table() for _ in range(20) if not time.sleep(0.25)]
-    if p:
-        p.wait()
-        time.sleep(30)
     return s
 
 

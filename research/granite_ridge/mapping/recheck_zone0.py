@@ -120,11 +120,12 @@ def main():
     try:
         time.sleep(6)  # let it ramp
         load = phase("LOAD (8s)", 8)
+        p.wait()
     except BaseException:
-        p.terminate()
+        if p.poll() is None:
+            p.terminate()
         p.wait()
         raise
-    p.wait()
 
     print("\n\n================ DELTA ANALYSIS ================")
     print(f"RAPL package power : {idle['watts']:.2f} -> {load['watts']:.2f} W")

@@ -49,11 +49,12 @@ def main():
         print("LOAD 45s ...")
         time.sleep(45)
         load = avg()
+        p.wait()
     except BaseException:
-        p.terminate()
+        if p.poll() is None:
+            p.terminate()
         p.wait()
         raise
-    p.wait()
 
     print("\n=== EDC_VALUE candidates: idle<40, load in [90,182] ===")
     for idx, (i, lo) in enumerate(zip(idle, load)):
