@@ -507,9 +507,11 @@ class TestGlobalNames(unittest.TestCase):
         self.assertEqual(VERMEER.confidence("core_voltage"), "high")
         self.assertEqual(VERMEER.confidence("core_temp"), "confirmed")
         self.assertEqual(VERMEER.confidence("core_c0"), "confirmed")
-        for key in ((0x620105, 1828, 8), (0x620205, 2452, 16)):
-            self.assertEqual(PROFILES[key].confidence("core_power"),
-                             "confirmed")
+        self.assertEqual(
+            PROFILES[(0x620105, 1828, 8)].confidence("core_power"), "high")
+        self.assertEqual(
+            PROFILES[(0x620205, 2452, 16)].confidence("core_power"),
+            "confirmed")
 
 
 class TestLivePowerIndex(unittest.TestCase):

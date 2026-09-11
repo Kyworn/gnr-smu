@@ -45,6 +45,34 @@ ACCENT_GREEN = "#36c987"
 ACCENT_PURPLE = "#b48cff"
 ACCENT_CYAN = "#42c8e8"
 
+_POWER_SENSORS = (
+    ("socket_power", "CPU Socket Power"), ("cpu_power", "CPU Core Power"),
+    ("core_power", "Core Power Sum"), ("soc_power", "CPU SoC Power"),
+    ("vddio_power", "VDDIO MEM Power"), ("vdd18_power", "VDD18 Power"),
+)
+_POWER_SENSORS_9800X3D = (
+    ("pkg_power", "CPU Package Power"),
+    ("core_power", "Per-Core Power Sum"),
+    ("soc_power", "CPU SoC Power"),
+)
+
+_VOLTAGE_SENSORS = (
+    ("vcore_peak", "Vcore Peak"), ("vcore_avg", "Vcore Average"),
+    ("vsoc", "VDDCR_SOC"), ("vdd_misc", "VDD_MISC"),
+    ("vddg_iod", "CLDO_VDDG_IOD"), ("vddg_ccd", "CLDO_VDDG_CCD"),
+    ("vddp", "CLDO_VDDP"), ("vid", "CPU VID"),
+    ("vid_limit", "VID Limit"),
+)
+_VOLTAGE_SENSORS_9800X3D = (
+    ("vcore_peak", "Per-Core Voltage Peak"),
+    ("vcore_avg", "Per-Core Voltage Average"),
+    ("vcore_telemetry_peak", "Vcore Telemetry Peak"),
+    ("vcore_telemetry_average", "Vcore Telemetry Average"),
+    ("vsoc", "VDDCR_SOC"),
+    ("vddio_mem_voltage", "VDDIO_MEM Voltage"),
+    ("vddcr_cpu_vid", "SVI3 VDDCR_CPU VID"),
+)
+
 
 def physical_core_cpu_ids():
     """Return one logical CPU per physical core, ordered by package and core ID."""
@@ -528,7 +556,9 @@ class GNRMaster(QMainWindow):
                              f"Core {core} (CCD{core // 8 + 1})", "°C")
 
         l3 = self._add_sensor_group(temperatures, "L3 Cache Temperatures")
-        l3.setToolTip(0, "PM-table lanes validated by cache-specific load testing.")
+        l3.setToolTip(
+            0, "High-confidence PM-table lanes supported by cache-specific load testing."
+        )
         if self.profile and self.profile.ccd_candidate_count:
             for ccd in range(self.profile.ccd_candidate_count):
                 if self.profile.pm_version == 0x620105:
@@ -562,12 +592,13 @@ class GNRMaster(QMainWindow):
         self._add_sensor(limits, "thermal_limit", "Thermal Limit", "°C")
 
         power = self._add_sensor_group(None, "Power")
-        for key, label in (
-            ("socket_power", "CPU Socket Power"), ("cpu_power", "CPU Core Power"),
-            ("core_power", "Core Power Sum"), ("soc_power", "CPU SoC Power"),
-            ("vddio_power", "VDDIO MEM Power"), ("vdd18_power", "VDD18 Power"),
-        ):
-            self._add_sensor(power, key, label, "W")
+        power_sensors = (_POWER_SENSORS_9800X3D
+                         if self.profile is not None
+                         and self.profile.pm_version == 0x620105
+                         else _POWER_SENSORS)
+        for key, label in power_sensors:
+            self._add_sensor(power, key, label, "W",
+                             self._block_tooltip(key))
         core_power = self._add_sensor_group(power, "Core Powers")
         for core in range(self.core_count):
             self._add_sensor(core_power, f"core_power_{core}",
@@ -581,10 +612,15 @@ class GNRMaster(QMainWindow):
             self._add_sensor(clocks, key, label, "MHz",
                              self._block_tooltip(key))
         core_clocks = self._add_sensor_group(clocks, "Core Clocks", expanded=True)
+        core_clock_tooltip = (
+            "Confirmed per-core PM-table frequency."
+            if self.profile is not None and self.profile.core_frequency is not None
+            else "Live frequency from Linux cpufreq."
+        )
         for core in range(self.core_count):
             self._add_sensor(core_clocks, f"core_clock_{core}",
                              f"Core {core} (CCD{core // 8 + 1})", "MHz",
-                             "Live frequency from Linux cpufreq on the 9950X3D")
+                             core_clock_tooltip)
         if self.profile is not None and self.profile.core_eff_frequency is not None:
             eff_clocks = self._add_sensor_group(clocks, "Core Effective Clocks")
             for core in range(self.core_count):
@@ -595,11 +631,11 @@ class GNRMaster(QMainWindow):
                     f"d[{self.profile.lane(self.profile.core_eff_frequency, core)}].")
 
         voltages = self._add_sensor_group(None, "Voltages")
-        for key, label in (("vcore_peak", "Vcore Peak"), ("vcore_avg", "Vcore Average"),
-                           ("vsoc", "VDDCR_SOC"), ("vdd_misc", "VDD_MISC"),
-                           ("vddg_iod", "CLDO_VDDG_IOD"), ("vddg_ccd", "CLDO_VDDG_CCD"),
-                           ("vddp", "CLDO_VDDP"), ("vid", "CPU VID"),
-                           ("vid_limit", "VID Limit")):
+        voltage_sensors = (_VOLTAGE_SENSORS_9800X3D
+                           if self.profile is not None
+                           and self.profile.pm_version == 0x620105
+                           else _VOLTAGE_SENSORS)
+        for key, label in voltage_sensors:
             self._add_sensor(voltages, key, label, "V",
                              self._block_tooltip(key))
         core_voltages = self._add_sensor_group(voltages, "Core Voltages")
@@ -1056,9 +1092,13 @@ class GNRMaster(QMainWindow):
         high-confidence mapping is marked.
         """
         if self.profile is not None and self.profile.confidence(block) == "high":
+            evidence_doc = {
+                0x620105: "9800X3D_PM_TABLE_0x620105.md",
+                0x620205: "9950X3D.md",
+                0x380905: "VERMEER_5600X.md",
+            }.get(self.profile.pm_version, "the architecture documentation")
             return ("High-confidence mapping (load response + canonical layout "
-                    "order), not independently cross-validated — see "
-                    "docs/architectures/vermeer/VERMEER_5600X.md.")
+                    f"order), not independently cross-validated — see {evidence_doc}.")
         return ""
 
     @staticmethod
@@ -1081,7 +1121,10 @@ class GNRMaster(QMainWindow):
         self._set_sensor("tdc_limit", tdc_limit)
         self._set_sensor("edc_limit", edc_limit)
         self._set_sensor("thermal_limit", self._g(d, "thm_limit"))
-        self._set_sensor("socket_power", self._g(d, "socket_power"))
+        if self.profile.pm_version == 0x620105:
+            self._set_sensor("pkg_power", self._g(d, "pkg_power"))
+        else:
+            self._set_sensor("socket_power", self._g(d, "socket_power"))
         if self.profile.edc_value is not None:
             current_edc = d[self.profile.edc_value]
             self._set_sensor("edc", current_edc)
@@ -1103,24 +1146,34 @@ class GNRMaster(QMainWindow):
                 f"{self._fmt_opt(tdc_limit, '{:.0f} A')} · "
                 f"EDC {self._fmt_opt(edc_limit, '{:.0f} A')}",
             )
-        self._set_sensor("cpu_power", self._g(d, "cpu_power"))
         self._set_sensor("core_power", sum(
             self.profile.lane_values(d, self.profile.core_power)))
         self._set_sensor("soc_power", self._g(d, "soc_power"))
-        self._set_sensor("vddio_power", self._g(d, "vddio_power"))
-        self._set_sensor("vdd18_power", self._g(d, "vdd18_power"))
+        if self.profile.pm_version != 0x620105:
+            self._set_sensor("cpu_power", self._g(d, "cpu_power"))
+            self._set_sensor("vddio_power", self._g(d, "vddio_power"))
+            self._set_sensor("vdd18_power", self._g(d, "vdd18_power"))
         self._set_sensor("fclk", self._g(d, "fclk"))
         self._set_sensor("uclk", self._g(d, "uclk"))
         self._set_sensor("mclk", self._g(d, "mclk"))
         self._set_sensor("vcore_peak", max(vcores))
         self._set_sensor("vcore_avg", sum(vcores) / self.core_count)
         self._set_sensor("vsoc", self._g(d, "vsoc"))
-        self._set_sensor("vdd_misc", self._g(d, "vdd_misc"))
-        self._set_sensor("vddg_iod", self._g(d, "vddg_iod"))
-        self._set_sensor("vddg_ccd", self._g(d, "vddg_ccd"))
-        self._set_sensor("vddp", self._g(d, "vddp"))
-        self._set_sensor("vid", self._g(d, "vid"))
-        self._set_sensor("vid_limit", self._g(d, "vid_limit"))
+        if self.profile.pm_version == 0x620105:
+            self._set_sensor("vcore_telemetry_peak",
+                             self._g(d, "vcore_telemetry_peak"))
+            self._set_sensor("vcore_telemetry_average",
+                             self._g(d, "vcore_telemetry_average"))
+            self._set_sensor("vddio_mem_voltage",
+                             self._g(d, "vddio_mem_voltage"))
+            self._set_sensor("vddcr_cpu_vid", self._g(d, "vddcr_cpu_vid"))
+        else:
+            self._set_sensor("vdd_misc", self._g(d, "vdd_misc"))
+            self._set_sensor("vddg_iod", self._g(d, "vddg_iod"))
+            self._set_sensor("vddg_ccd", self._g(d, "vddg_ccd"))
+            self._set_sensor("vddp", self._g(d, "vddp"))
+            self._set_sensor("vid", self._g(d, "vid"))
+            self._set_sensor("vid_limit", self._g(d, "vid_limit"))
 
         ccd_count = max(1, (self.core_count + 7) // 8)
         for ccd in range(ccd_count):

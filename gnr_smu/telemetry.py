@@ -61,16 +61,16 @@ _EXTRA_VERMEER = [
     ("cldo_vddp", "vddp", "V"),
 ]
 
-_EXTRA_9800X3D = [    ("hotspot_temp", "hotspot_temp", "C"),
+_EXTRA_9800X3D = [
+    ("vcore_telemetry_peak", "vcore_telemetry_peak", "V"),
+    ("vcore_telemetry_average", "vcore_telemetry_average", "V"),
+    ("vddio_mem_voltage", "vddio_mem_voltage", "V"),
+    ("vddcr_cpu_vid", "vddcr_cpu_vid", "V"),
+    ("hotspot_temp", "hotspot_temp", "C"),
     ("pkg_power", "pkg_power", "W"),
     ("soc_power", "soc_power", "W"),
-    ("soc_telemetry", "soc_telemetry", "metric"),
-    ("soc_telemetry_metric", "soc_telemetry_metric", "unit"),
     ("igpu_power", "igpu_power", "W"),
     ("igpu_clock", "igpu_clock", "MHz"),
-    ("slow_temp_0", "slow_temp_0", "C"),
-    ("slow_temp_1", "slow_temp_1", "C"),
-    ("pkg_energy", "pkg_energy", "J"),
 ]
 
 def _resolve(profile, column, key, unit):

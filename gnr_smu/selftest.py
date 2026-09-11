@@ -108,7 +108,8 @@ def main():
     assert probe_profile.lane_values(list(range(500)), 333) == list(range(333, 341))
     assert probe_profile.gidx("ppt_limit") == 2
     assert probe_profile.gidx("tctl") == 11
-    assert probe_profile.gidx("socket_power") == 20
+    assert probe_profile.gidx("pkg_power") == 20
+    assert probe_profile.gidx("socket_power") is None
     assert probe_profile.gidx("no_such_field") is None
     other = PROFILES[(0x620205, 2452, 16)]
     assert other.gidx("socket_power") == 26, \

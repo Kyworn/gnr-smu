@@ -138,7 +138,14 @@ class HardwareProfile:
         return None
 
     def confidence(self, block):
-        """'confirmed', 'high', or None (not mapped) for a block/global."""
+        """'confirmed', 'high', 'candidate', or None for a block/global."""
+        if block.endswith("_candidate"):
+            return ("candidate" if getattr(self, block, None) is not None
+                    else None)
+        if block == "core_boost_limit" and not self.boost_limit_confident:
+            return "candidate" if self.core_boost_limit is not None else None
+        if block == "edc_value":
+            return "candidate" if self.edc_value is not None else None
         if block in self.provisional_blocks or block in self.provisional_globals:
             return "high"
         if block in GLOBAL_FIELD_NAMES:
@@ -165,7 +172,9 @@ GLOBAL_FIELD_NAMES = frozenset({
     "edc_limit",
     "fclk", "uclk", "mclk",
     "vid_limit", "vid",
+    "vcore_telemetry_peak", "vcore_telemetry_average",
     "vdd_misc", "vsoc",
+    "vddio_mem_voltage", "vddcr_cpu_vid",
     "vddg_iod", "vddg_ccd", "vddp",
     "socket_power", "cpu_power", "pkg_power",
     "soc_power", "vddio_power", "vdd18_power",
@@ -184,18 +193,35 @@ def validate_profile_globals(profile):
             if key not in GLOBAL_FIELD_NAMES]
 
 
-# Global telemetry shared by both Granite Ridge parts (zone 0x000 pairs,
-# clocks, rails).  Kept as data so the front-ends need no pm_version branch.
+# Global telemetry whose identities are established on both Granite Ridge
+# profiles. Part-specific rails remain separate: equal indices do not prove
+# equal meanings across different PM-table versions.
 _GNR_COMMON_GLOBALS = (
     ("ppt_limit", 2), ("ppt_value", 3),
     ("tdc_limit", 8), ("tdc_value", 9),
     ("thm_limit", 10), ("tctl", 11),
     ("edc_limit", 63),
     ("fclk", 71), ("uclk", 75), ("mclk", 79),
+)
+
+_GNR_9950X3D_GLOBALS = _GNR_COMMON_GLOBALS + (
     ("vid_limit", 18), ("vid", 19),
     ("vdd_misc", 58),
     ("vsoc", 83),
     ("vddg_iod", 259), ("vddg_ccd", 261), ("vddp", 269),
+)
+
+_GNR_9800X3D_GLOBALS = _GNR_COMMON_GLOBALS + (
+    ("vcore_telemetry_peak", 18),
+    ("vcore_telemetry_average", 19),
+    ("pkg_power", 20),
+    ("soc_power", 21),
+    ("vddio_mem_voltage", 58),
+    ("vsoc", 83),
+    ("vddcr_cpu_vid", 269),
+    ("hotspot_temp", 270),
+    ("igpu_power", 107),
+    ("igpu_clock", 108),
 )
 
 PROFILES = {
@@ -219,15 +245,10 @@ PROFILES = {
         co_mode="legacy_per_message",
         co_get_msg=0xD5,
         allow_smu_writes=True,
-        globals_map=_GNR_COMMON_GLOBALS + (
-            ("socket_power", 20), ("cpu_power", 20), ("pkg_power", 20),
-            ("soc_power", 21), ("vddio_power", 22), ("vdd18_power", 23),
-            ("hotspot_temp", 270),
-            ("soc_telemetry", 87), ("soc_telemetry_metric", 95),
-            ("igpu_power", 107), ("igpu_clock", 108),
-            ("slow_temp_0", 298), ("slow_temp_1", 299),
-            ("pkg_energy", 212),
-        ),
+        globals_map=_GNR_9800X3D_GLOBALS,
+        provisional_blocks=("core_power", "core_cc6", "ccd_l3_temperature"),
+        provisional_globals=("soc_power", "vddio_mem_voltage", "vsoc",
+                             "vddcr_cpu_vid"),
     ),
     (0x620205, 2452, 16): HardwareProfile(
         "AMD Ryzen 9 9950X3D", "AMD Ryzen 9 9950X3D", 0x620205, 2452, 16,
@@ -277,7 +298,7 @@ PROFILES = {
         co_mode="packed_core_mask", co_msg=0x35,
         co_get_msg=0xD5,
         allow_smu_writes=True,
-        globals_map=_GNR_COMMON_GLOBALS + (
+        globals_map=_GNR_9950X3D_GLOBALS + (
             ("fit_metric", 16),
             ("cpu_power", 20), ("soc_power", 21),
             ("vddio_power", 22), ("vdd18_power", 23),
