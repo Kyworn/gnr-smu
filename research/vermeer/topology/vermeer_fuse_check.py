@@ -23,12 +23,19 @@ import argparse
 import os
 import struct
 import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 SMN = "/sys/kernel/ryzen_smu_drv/smn"
 CCD_FUSE1 = 0x5D218
 CCD_FUSE2 = 0x5D21C
 CORE_BASE = 0x30081800
 F19_OFFSET = 0x598
+EXPECTED_PROFILE = PROFILES[(0x380905, 1488, 6)]
 
 
 def require_vermeer_class():
@@ -78,6 +85,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--read", choices=("ccd", "core"), required=True)
     args = ap.parse_args()
+
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"REFUSING: this fuse check requires the validated 5600X "
+                         f"profile ({why})")
 
     fam, model = require_vermeer_class()
     print(f"CPUID check: family {fam} (0x19), model {model} (0x{model:02X})")

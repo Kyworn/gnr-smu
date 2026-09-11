@@ -33,12 +33,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 WATCH = [595, 596, 611, 612]
 LOAD_SECONDS = 22
 SAMPLE_SECONDS = 12
 COOLDOWN_SECONDS = 20
+EXPECTED_PROFILE = PROFILES[(0x620205, 2452, 16)]
 
 
 def physical_core_cpus():
@@ -86,8 +88,13 @@ def run_workload(cpus, args, seconds):
 
 def measure(profile, cpus, args, label):
     p = run_workload(cpus, args, LOAD_SECONDS)
-    time.sleep(LOAD_SECONDS - SAMPLE_SECONDS)
-    med = medians(sample(profile, SAMPLE_SECONDS))
+    try:
+        time.sleep(LOAD_SECONDS - SAMPLE_SECONDS)
+        med = medians(sample(profile, SAMPLE_SECONDS))
+    except BaseException:
+        p.terminate()
+        p.wait()
+        raise
     p.wait()
     print(f"  [{label}] CCD0-avg={core_avg(profile, med):.2f}  Tctl={med[11]:.2f}")
     return med
@@ -95,9 +102,8 @@ def measure(profile, cpus, args, label):
 
 def main():
     profile, why = get_hardware_profile()
-    if profile is None:
-        print(f"Unsupported hardware: {why}")
-        return
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 9950X3D experiment: {why}")
     print(f"{profile.name}: PM table 0x{profile.pm_version:X}, {profile.table_size} bytes")
 
     ccd0_cpus = physical_core_cpus()[:8]

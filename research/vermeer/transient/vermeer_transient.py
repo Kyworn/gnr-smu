@@ -25,10 +25,19 @@ import struct
 import subprocess
 import sys
 import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
+from research.sysfs_discovery import (hwmon_inputs,
+                                      powercap_energy)  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 PM_SIZE = 1488
 NFLOAT = PM_SIZE // 4
+EXPECTED_PROFILE = PROFILES[(0x380905, 1488, 6)]
 
 PHASES = [
     ("idle", 30, None),
@@ -55,17 +64,6 @@ PHASES = [
 ]
 
 
-def find_k10temp():
-    for path in glob.glob("/sys/class/hwmon/hwmon*"):
-        try:
-            with open(f"{path}/name") as f:
-                if f.read().strip() == "k10temp":
-                    return path
-        except OSError:
-            pass
-    return None
-
-
 def read_k10temp(hwmon):
     out = {}
     for lp in glob.glob(f"{hwmon}/temp*_label"):
@@ -78,20 +76,6 @@ def read_k10temp(hwmon):
         except OSError:
             pass
     return out
-
-
-def find_rapl():
-    found = {}
-    for path in glob.glob("/sys/class/powercap/intel-rapl:*"):
-        try:
-            with open(f"{path}/name") as f:
-                name = f.read().strip()
-            with open(f"{path}/energy_uj") as f:
-                f.read()
-            found[name] = path
-        except OSError:
-            pass
-    return found
 
 
 def read_rapl(rapl):
@@ -136,18 +120,13 @@ def sample(hwmon, rapl):
     }
 
 
-def run_phase(label, seconds, cmd, hz, fh):
+def run_phase(label, seconds, cmd, hz, fh, hwmon, rapl):
     worker = None
     if cmd is not None:
         worker = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                   stderr=subprocess.DEVNULL)
         if worker.poll() is not None:
-            print(f"workload failed to start: {cmd}", file=sys.stderr)
-            worker = None
-    hwmon = find_k10temp()
-    rapl = find_rapl()
-    if hwmon is None:
-        raise SystemExit("k10temp hwmon not found")
+            raise RuntimeError(f"workload failed to start: {cmd}")
     print(f"[{time.strftime('%H:%M:%S')}] phase {label} {seconds}s "
           f"(k10temp={hwmon}, rapl={sorted(rapl)})", flush=True)
     deadline = time.monotonic() + seconds
@@ -177,7 +156,21 @@ def main():
     ap.add_argument("--phases", default="",
                     help="comma list of phase labels to run (default: all)")
     args = ap.parse_args()
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 5600X experiment: {why}")
+    if args.hz <= 0:
+        raise SystemExit("--hz must be positive")
     wanted = [p.strip() for p in args.phases.split(",") if p.strip()]
+    known_phases = {p[0] for p in PHASES}
+    unknown = sorted(set(wanted) - known_phases)
+    if unknown:
+        raise SystemExit(f"unknown phase(s): {', '.join(unknown)}")
+    tctl = hwmon_inputs("k10temp", {"tctl": ("temp", "Tctl")})["tctl"]
+    package = powercap_energy("package-0")
+    core = powercap_energy("core")
+    hwmon = str(tctl.parent)
+    rapl = {"package-0": str(package.parent), "core": str(core.parent)}
     total = 0
     with open(args.out, "w") as fh:
         fh.write(json.dumps({"info": "vermeer transient run",
@@ -185,7 +178,7 @@ def main():
         for label, seconds, cmd in PHASES:
             if wanted and label not in wanted:
                 continue
-            total += run_phase(label, seconds, cmd, args.hz, fh)
+            total += run_phase(label, seconds, cmd, args.hz, fh, hwmon, rapl)
     print(f"wrote {total} samples to {args.out}")
 
 

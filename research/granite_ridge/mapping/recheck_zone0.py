@@ -13,12 +13,21 @@ Run: sudo python3 research/granite_ridge/mapping/recheck_zone0.py
 
 import struct
 import subprocess
+import sys
 import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
+from research.sysfs_discovery import hwmon_inputs, powercap_energy  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
-RAPL = "/sys/class/powercap/intel-rapl:0/energy_uj"
-TCTL = "/sys/class/hwmon/hwmon3/temp1_input"
-TCCD = "/sys/class/hwmon/hwmon3/temp3_input"
+EXPECTED_PROFILE = PROFILES[(0x620105, 1828, 8)]
+RAPL = None
+TCTL = None
+TCCD = None
 
 # offsets we care about -> current doc label
 WATCH = {
@@ -88,33 +97,54 @@ def phase(label, seconds, proc=None):
     return b
 
 
-idle = phase("IDLE (8s)", 8)
+def main():
+    global RAPL, TCTL, TCCD
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 9800X3D experiment: {why}")
+    sensors = hwmon_inputs("k10temp", {
+        "tctl": ("temp", "Tctl"),
+        "tccd1": ("temp", "Tccd1"),
+    })
+    TCTL, TCCD = sensors["tctl"], sensors["tccd1"]
+    RAPL = powercap_energy("package-0")
 
-print("\n>>> stress-ng --cpu 16 for 20s ...")
-p = subprocess.Popen(
-    ["stress-ng", "--cpu", "16", "--timeout", "24"],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-)
-time.sleep(6)  # let it ramp
-load = phase("LOAD (8s)", 8)
-p.wait()
+    idle = phase("IDLE (8s)", 8)
 
-print("\n\n================ DELTA ANALYSIS ================")
-print(f"RAPL package power : {idle['watts']:.2f} -> {load['watts']:.2f} W")
-print(f"k10temp Tctl       : {idle['tctl']:.2f} -> {load['tctl']:.2f} degC")
-print(f"k10temp Tccd1      : {idle['tccd']:.2f} -> {load['tccd']:.2f} degC")
-print()
-print(f"{'off':>6} {'idle':>10} {'load':>10} {'delta':>9}  {'vs W':>8} {'vs Tctl':>8}")
-dw = load["watts"] - idle["watts"]
-dt = load["tctl"] - idle["tctl"]
-for off in WATCH:
-    i, lo = idle["pm"][off // 4], load["pm"][off // 4]
-    d = lo - i
-    rw = d / dw if abs(dw) > 1 else float("nan")
-    rt = d / dt if abs(dt) > 1 else float("nan")
-    print(f"0x{off:03X} {i:10.3f} {lo:10.3f} {d:+9.3f}  {rw:8.2f} {rt:8.2f}")
+    print("\n>>> stress-ng --cpu 16 for 20s ...")
+    p = subprocess.Popen(
+        ["stress-ng", "--cpu", "16", "--timeout", "24"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        time.sleep(6)  # let it ramp
+        load = phase("LOAD (8s)", 8)
+    except BaseException:
+        p.terminate()
+        p.wait()
+        raise
+    p.wait()
 
-print("\nRatio ~1.00 in 'vs W' column => that offset IS watts (tracks RAPL 1:1).")
-print("Ratio ~1.00 in 'vs Tctl'      => that offset IS degC (tracks k10temp 1:1).")
-print(f"\nSanity: 0x2E8 + 0x2EC = {load['pm'][0x2E8 // 4] + load['pm'][0x2EC // 4]:.3f}")
+    print("\n\n================ DELTA ANALYSIS ================")
+    print(f"RAPL package power : {idle['watts']:.2f} -> {load['watts']:.2f} W")
+    print(f"k10temp Tctl       : {idle['tctl']:.2f} -> {load['tctl']:.2f} degC")
+    print(f"k10temp Tccd1      : {idle['tccd']:.2f} -> {load['tccd']:.2f} degC")
+    print()
+    print(f"{'off':>6} {'idle':>10} {'load':>10} {'delta':>9}  {'vs W':>8} {'vs Tctl':>8}")
+    dw = load["watts"] - idle["watts"]
+    dt = load["tctl"] - idle["tctl"]
+    for off in WATCH:
+        i, lo = idle["pm"][off // 4], load["pm"][off // 4]
+        d = lo - i
+        rw = d / dw if abs(dw) > 1 else float("nan")
+        rt = d / dt if abs(dt) > 1 else float("nan")
+        print(f"0x{off:03X} {i:10.3f} {lo:10.3f} {d:+9.3f}  {rw:8.2f} {rt:8.2f}")
+
+    print("\nRatio ~1.00 in 'vs W' column => that offset IS watts (tracks RAPL 1:1).")
+    print("Ratio ~1.00 in 'vs Tctl'      => that offset IS degC (tracks k10temp 1:1).")
+    print(f"\nSanity: 0x2E8 + 0x2EC = {load['pm'][0x2E8 // 4] + load['pm'][0x2EC // 4]:.3f}")
+
+
+if __name__ == "__main__":
+    main()

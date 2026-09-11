@@ -33,9 +33,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 WATCH = [595, 596, 611, 612]
+EXPECTED_PROFILE = PROFILES[(0x620205, 2452, 16)]
 
 
 def physical_core_cpus():
@@ -90,9 +92,8 @@ def report(label, med, profile):
 
 def main():
     profile, why = get_hardware_profile()
-    if profile is None:
-        print(f"Unsupported hardware for this research script: {why}")
-        return
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 9950X3D experiment: {why}")
     print(f"{profile.name}: PM table 0x{profile.pm_version:X}, {profile.table_size} bytes")
 
     cores = physical_core_cpus()
@@ -105,8 +106,13 @@ def main():
 
     print(f"\nA) ALU-only load on CCD0 (cpus {ccd0_cpus}), 20s ...")
     p = run_workload(ccd0_cpus, ["--cpu", str(len(ccd0_cpus)), "--cpu-method", "ackermann"], 25)
-    time.sleep(5)
-    a = medians(sample(profile, 15))
+    try:
+        time.sleep(5)
+        a = medians(sample(profile, 15))
+    except BaseException:
+        p.terminate()
+        p.wait()
+        raise
     p.wait()
     report("A: ALU (ackermann, low L3 traffic)", a, profile)
 
@@ -115,8 +121,13 @@ def main():
 
     print(f"\nB) L3 cache-thrash load on CCD0 (cpus {ccd0_cpus}), 20s ...")
     p = run_workload(ccd0_cpus, ["--cache", str(len(ccd0_cpus)), "--cache-level", "3"], 25)
-    time.sleep(5)
-    b = medians(sample(profile, 15))
+    try:
+        time.sleep(5)
+        b = medians(sample(profile, 15))
+    except BaseException:
+        p.terminate()
+        p.wait()
+        raise
     p.wait()
     report("B: L3 cache-thrash", b, profile)
 

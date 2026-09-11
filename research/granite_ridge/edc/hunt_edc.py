@@ -28,11 +28,19 @@ Run: python3 research/granite_ridge/edc/hunt_edc.py
 import statistics
 import struct
 import subprocess
+import sys
 import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 N = 457
 EDC_LIMIT = 180.0
+EXPECTED_PROFILE = PROFILES[(0x620105, 1828, 8)]
 
 # Already identified — a hit here is a known field, not a discovery.
 KNOWN = {
@@ -63,64 +71,81 @@ def sample(seconds, n=30):
 def run(args, settle, window):
     p = subprocess.Popen(["stress-ng", *args, "--timeout", str(settle + window + 5)],
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    time.sleep(settle)
-    out = sample(window)
+    try:
+        time.sleep(settle)
+        out = sample(window)
+    except BaseException:
+        p.terminate()
+        p.wait()
+        raise
     p.wait()
     return out
 
 
-print("idle (45 s settle) ...")
-time.sleep(45)
-idle, idle_max = sample(8)
+def main():
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 9800X3D experiment: {why}")
 
-print("light load: stress-ng --cpu 16 ...")
-intg, intg_max = run(["--cpu", "16"], 25, 12)
+    print("idle (45 s settle) ...")
+    time.sleep(45)
+    idle, idle_max = sample(8)
 
-print("cooldown 45 s ...")
-time.sleep(45)
+    print("light load: stress-ng --cpu 16 ...")
+    intg, intg_max = run(["--cpu", "16"], 25, 12)
 
-print("heavy load: stress-ng --matrix 16 ...")
-avx, avx_max = run(["--matrix", "16"], 25, 12)
+    print("cooldown 45 s ...")
+    time.sleep(45)
 
-print(f"\nTctl idle {idle[11]:.1f} -> int {intg[11]:.1f} -> avx {avx[11]:.1f} C")
-print(f"Pkg power {idle[20]:.1f} -> {intg[20]:.1f} -> {avx[20]:.1f} W")
-print(f"TDC value {idle[9]:.1f} -> {intg[9]:.1f} -> {avx[9]:.1f} A "
-      f"(limit {idle[8]:.0f})\n")
+    print("heavy load: stress-ng --matrix 16 ...")
+    avx, avx_max = run(["--matrix", "16"], 25, 12)
 
-cands = []
-for i in range(N):
-    lo, hi_i, hi_a = idle[i], intg[i], avx[i]
-    peak = avx_max[i]
-    if not (0 <= lo < 30):                       # must start low
-        continue
-    if hi_a <= lo + 5:                           # must rise with load
-        continue
-    if peak > EDC_LIMIT:                         # must respect its own limit
-        continue
-    if hi_a <= hi_i:                             # AVX must beat integer
-        continue
-    # how much harder AVX pushes it than integer does — EDC should be the field
-    # where this ratio is largest
-    heavy_bias = (hi_a - lo) / max(hi_i - lo, 1e-3)
-    cands.append((heavy_bias, i, lo, hi_i, hi_a, peak))
+    print(f"\nTctl idle {idle[11]:.1f} -> int {intg[11]:.1f} -> avx {avx[11]:.1f} C")
+    print(f"Pkg power {idle[20]:.1f} -> {intg[20]:.1f} -> {avx[20]:.1f} W")
+    print(f"TDC value {idle[9]:.1f} -> {intg[9]:.1f} -> {avx[9]:.1f} A "
+          f"(limit {idle[8]:.0f})\n")
 
-cands.sort(reverse=True)
-print("== Candidates: low at idle, rise under load, heavy > light, peak <= 180 ==")
-print(f"{'idx':>4} {'off':>6} {'idle':>8} {'int':>8} {'heavy':>8} {'peak':>8} "
-      f"{'ratio':>8}  note")
-for bias, i, lo, hi_i, hi_a, peak in cands[:25]:
-    note = KNOWN.get(i, "")
-    print(f"{i:>4} 0x{i * 4:04X} {lo:>8.2f} {hi_i:>8.2f} {hi_a:>8.2f} {peak:>8.2f} "
-          f"{bias:>8.2f}  {note}")
+    cands = []
+    for i in range(N):
+        lo, hi_i, hi_a = idle[i], intg[i], avx[i]
+        peak = avx_max[i]
+        if not (0 <= lo < 30):                       # must start low
+            continue
+        if hi_a <= lo + 5:                           # must rise with load
+            continue
+        if peak > EDC_LIMIT:                         # must respect its own limit
+            continue
+        if hi_a <= hi_i:                             # AVX must beat integer
+            continue
+        # how much harder AVX pushes it than integer does — EDC should be the field
+        # where this ratio is largest
+        heavy_bias = (hi_a - lo) / max(hi_i - lo, 1e-3)
+        cands.append((heavy_bias, i, lo, hi_i, hi_a, peak))
 
-print(f"\n{len(cands)} candidates, {sum(1 for c in cands if c[1] not in KNOWN)} unknown")
+    cands.sort(reverse=True)
+    print("== Candidates: low at idle, rise under load, heavy > light, peak <= 180 ==")
+    print(f"{'idx':>4} {'off':>6} {'idle':>8} {'int':>8} {'heavy':>8} {'peak':>8} "
+          f"{'ratio':>8}  note")
+    for bias, i, lo, hi_i, hi_a, peak in cands[:25]:
+        note = KNOWN.get(i, "")
+        print(f"{i:>4} 0x{i * 4:04X} {lo:>8.2f} {hi_i:>8.2f} {hi_a:>8.2f} "
+              f"{peak:>8.2f} {bias:>8.2f}  {note}")
 
-# A real EDC_VALUE should also exceed TDC_VALUE — EDC is the peak-current limit and
-# is always the higher of the two on Zen.
-print("\n== of those, the ones reading above TDC value under heavy load ==")
-hits = [c for c in cands if c[4] > avx[9] and c[1] not in KNOWN]
-if not hits:
-    print(f"  none. No unknown field exceeds TDC value ({avx[9]:.1f} A) under the heaviest load available.")
-else:
-    for bias, i, lo, hi_i, hi_a, peak in hits:
-        print(f"  d[{i}] (0x{i * 4:04X}) {lo:.2f} -> {hi_a:.2f} (peak {peak:.2f})")
+    print(f"\n{len(cands)} candidates, "
+          f"{sum(1 for c in cands if c[1] not in KNOWN)} unknown")
+
+    # A real EDC_VALUE should also exceed TDC_VALUE — EDC is the peak-current limit
+    # and is always the higher of the two on Zen.
+    print("\n== of those, the ones reading above TDC value under heavy load ==")
+    hits = [c for c in cands if c[4] > avx[9] and c[1] not in KNOWN]
+    if not hits:
+        print(f"  none. No unknown field exceeds TDC value ({avx[9]:.1f} A) "
+              "under the heaviest load available.")
+    else:
+        for bias, i, lo, hi_i, hi_a, peak in hits:
+            print(f"  d[{i}] (0x{i * 4:04X}) {lo:.2f} -> {hi_a:.2f} "
+                  f"(peak {peak:.2f})")
+
+
+if __name__ == "__main__":
+    main()

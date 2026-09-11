@@ -28,9 +28,12 @@ import time
 ROOT = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(ROOT))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
+from research.sysfs_discovery import hwmon_inputs  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 WATCH = list(range(589, 613))  # whole per-CCD L3 block
+EXPECTED_PROFILE = PROFILES[(0x620205, 2452, 16)]
 
 
 def physical_core_cpus():
@@ -45,16 +48,6 @@ def physical_core_cpus():
             continue
         cores[(package, core)] = min(cpu, cores.get((package, core), cpu))
     return [cores[key] for key in sorted(cores)]
-
-
-def find_k10temp():
-    for path in glob.glob("/sys/class/hwmon/hwmon*"):
-        try:
-            if Path(path, "name").read_text().strip() == "k10temp":
-                return Path(path)
-        except OSError:
-            pass
-    return None
 
 
 def k10temps(hwmon):
@@ -130,11 +123,16 @@ def report(tag, med, sens, profile):
 
 def main():
     profile, why = get_hardware_profile()
-    if profile is None:
-        raise SystemExit(f"refusing to interpret PM table: {why}")
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 9950X3D experiment: {why}")
     print(why)
     cpu_for_core = physical_core_cpus()
-    hwmon = find_k10temp()
+    sensors = hwmon_inputs("k10temp", {
+        "tctl": ("temp", "Tctl"),
+        "tccd1": ("temp", "Tccd1"),
+        "tccd2": ("temp", "Tccd2"),
+    })
+    hwmon = sensors["tctl"].parent
 
     print("baseline 5 s (keep the desktop idle) ...")
     base_rows, base_sens = sample(profile, 5, hwmon)

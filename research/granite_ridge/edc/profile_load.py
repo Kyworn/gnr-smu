@@ -19,11 +19,19 @@ Run: python3 research/granite_ridge/edc/profile_load.py
 import statistics
 import struct
 import subprocess
+import sys
 import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 N = 457
 LEVELS = [0, 1, 4, 8, 16]
+EXPECTED_PROFILE = PROFILES[(0x620105, 1828, 8)]
 
 
 def table():
@@ -44,39 +52,21 @@ def measure(threads):
         print(f"  stress-ng --matrix {threads} (25 s settle) ...")
         p = subprocess.Popen(["stress-ng", "--matrix", str(threads), "--timeout", "45"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(25)
+        try:
+            time.sleep(25)
+            s = [table() for _ in range(20) if not time.sleep(0.25)]
+        except BaseException:
+            p.terminate()
+            p.wait()
+            raise
+        p.wait()
+        time.sleep(30)  # cool down so the next level starts from a comparable place
+        return s
     s = [table() for _ in range(20) if not time.sleep(0.25)]
     if p:
         p.wait()
         time.sleep(30)  # cool down so the next level starts from a comparable place
     return s
-
-
-rows = []
-for n in LEVELS:
-    s = measure(n)
-    rows.append({
-        "n": n,
-        "pkg_w": med(s, lambda v: v[20]),
-        "core_w": med(s, lambda v: v[17]),
-        "tdc": med(s, lambda v: v[9]),
-        "idd": med(s, lambda v: sum(v[301:309])),
-        "soc_a": med(s, lambda v: v[57]),
-        "d212": med(s, lambda v: v[212]),
-        "d397": med(s, lambda v: sum(v[397:405])),
-        "d453": med(s, lambda v: v[453]),
-        "tctl": med(s, lambda v: v[11]),
-    })
-
-print(f"\n{'thr':>4} {'pkgW':>8} {'coreW':>8} {'TDC_A':>8} {'sumIDD':>8} "
-      f"{'IDD/TDC':>8} {'Tctl':>6} {'d212':>9} {'d212/W':>8} {'sum397':>9} "
-      f"{'d453':>8} {'453/W':>7}")
-for r in rows:
-    print(f"{r['n']:>4} {r['pkg_w']:>8.2f} {r['core_w']:>8.2f} {r['tdc']:>8.2f} "
-          f"{r['idd']:>8.2f} {r['idd'] / max(r['tdc'], 1e-3):>8.3f} {r['tctl']:>6.1f} "
-          f"{r['d212']:>9.0f} {r['d212'] / max(r['pkg_w'], 1e-3):>8.1f} "
-          f"{r['d397']:>9.0f} {r['d453']:>8.0f} "
-          f"{r['d453'] / max(r['pkg_w'], 1e-3):>7.1f}")
 
 
 def verdict(name, ratios, tol=0.15):
@@ -90,10 +80,46 @@ def verdict(name, ratios, tol=0.15):
     return ok
 
 
-print("\n== ratios across load levels (idle excluded — division by ~0) ==")
-loaded = [r for r in rows if r["n"] > 0]
-verdict("sum(IDD) / TDC value", [r["idd"] / r["tdc"] for r in loaded])
-verdict("d[212] / package W", [r["d212"] / r["pkg_w"] for r in loaded])
-verdict("sum d[397-404] / core W", [r["d397"] / r["core_w"] for r in loaded])
-verdict("d[453] / package W", [r["d453"] / r["pkg_w"] for r in loaded])
-verdict("d[212] / sum d[397-404]", [r["d212"] / r["d397"] for r in loaded])
+def main():
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise SystemExit(f"refusing 9800X3D experiment: {why}")
+
+    rows = []
+    for n in LEVELS:
+        s = measure(n)
+        rows.append({
+            "n": n,
+            "pkg_w": med(s, lambda v: v[20]),
+            "core_w": med(s, lambda v: v[17]),
+            "tdc": med(s, lambda v: v[9]),
+            "idd": med(s, lambda v: sum(v[301:309])),
+            "soc_a": med(s, lambda v: v[57]),
+            "d212": med(s, lambda v: v[212]),
+            "d397": med(s, lambda v: sum(v[397:405])),
+            "d453": med(s, lambda v: v[453]),
+            "tctl": med(s, lambda v: v[11]),
+        })
+
+    print(f"\n{'thr':>4} {'pkgW':>8} {'coreW':>8} {'TDC_A':>8} {'sumIDD':>8} "
+          f"{'IDD/TDC':>8} {'Tctl':>6} {'d212':>9} {'d212/W':>8} "
+          f"{'sum397':>9} {'d453':>8} {'453/W':>7}")
+    for r in rows:
+        print(f"{r['n']:>4} {r['pkg_w']:>8.2f} {r['core_w']:>8.2f} "
+              f"{r['tdc']:>8.2f} {r['idd']:>8.2f} "
+              f"{r['idd'] / max(r['tdc'], 1e-3):>8.3f} {r['tctl']:>6.1f} "
+              f"{r['d212']:>9.0f} {r['d212'] / max(r['pkg_w'], 1e-3):>8.1f} "
+              f"{r['d397']:>9.0f} {r['d453']:>8.0f} "
+              f"{r['d453'] / max(r['pkg_w'], 1e-3):>7.1f}")
+
+    print("\n== ratios across load levels (idle excluded — division by ~0) ==")
+    loaded = [r for r in rows if r["n"] > 0]
+    verdict("sum(IDD) / TDC value", [r["idd"] / r["tdc"] for r in loaded])
+    verdict("d[212] / package W", [r["d212"] / r["pkg_w"] for r in loaded])
+    verdict("sum d[397-404] / core W", [r["d397"] / r["core_w"] for r in loaded])
+    verdict("d[453] / package W", [r["d453"] / r["pkg_w"] for r in loaded])
+    verdict("d[212] / sum d[397-404]", [r["d212"] / r["d397"] for r in loaded])
+
+
+if __name__ == "__main__":
+    main()

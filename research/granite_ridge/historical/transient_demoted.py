@@ -56,49 +56,55 @@ def sample(seconds, mark=None):
     return out
 
 
-print(f"load: stress-ng --matrix 16 for {LOAD_S} s ...")
-p = subprocess.Popen(["stress-ng", "--matrix", "16", "--timeout", str(LOAD_S + 120)],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-time.sleep(LOAD_S - 8)
-hot = sample(8)                      # steady-state hot reference
-p.terminate()
-p.wait()
-print(f"released — recording {POST_S} s of decay ...")
-post = sample(POST_S)
-cold = post[-25:]                    # settled reference at the end of the window
+def main():
+    """Run the preserved historical experiment when invoked explicitly."""
+    print(f"load: stress-ng --matrix 16 for {LOAD_S} s ...")
+    p = subprocess.Popen(["stress-ng", "--matrix", "16", "--timeout", str(LOAD_S + 120)],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(LOAD_S - 8)
+    hot = sample(8)                      # steady-state hot reference
+    p.terminate()
+    p.wait()
+    print(f"released — recording {POST_S} s of decay ...")
+    post = sample(POST_S)
+    cold = post[-25:]                    # settled reference at the end of the window
 
-print(f"\n{len(hot)} hot samples, {len(post)} decay samples at {DT} s\n")
-
-
-def tau(i):
-    """Time for the field to fall (or rise) 63 % of the way from its hot value to its
-    settled value. Reported as None when the total swing is too small to time."""
-    a = statistics.median([v[i] for v in hot])
-    b = statistics.median([v[i] for v in cold])
-    swing = b - a
-    noise = statistics.pstdev([v[i] for v in cold]) or 1e-9
-    if abs(swing) < max(3 * noise, 1e-6):
-        return a, b, None
-    target = a + swing * 0.632
-    for k, v in enumerate(post):
-        y = v[i]
-        if (swing < 0 and y <= target) or (swing > 0 and y >= target):
-            return a, b, k * DT
-    return a, b, float("inf")
+    print(f"\n{len(hot)} hot samples, {len(post)} decay samples at {DT} s\n")
 
 
-print(f"{'name':>10} {'hot':>10} {'settled':>10} {'tau63':>8}")
-print("-- fast references (power / current domain) --")
-for n, i in FAST.items():
-    a, b, t = tau(i)
-    print(f"{n:>10} {a:10.2f} {b:10.2f} {t if t is None else f'{t:8.1f}':>8}")
-print("-- slow references (thermal domain) --")
-for n, i in SLOW.items():
-    a, b, t = tau(i)
-    print(f"{n:>10} {a:10.2f} {b:10.2f} {t if t is None else f'{t:8.1f}':>8}")
+    def tau(i):
+        """Time for the field to fall (or rise) 63 % of the way from its hot value to its
+        settled value. Reported as None when the total swing is too small to time."""
+        a = statistics.median([v[i] for v in hot])
+        b = statistics.median([v[i] for v in cold])
+        swing = b - a
+        noise = statistics.pstdev([v[i] for v in cold]) or 1e-9
+        if abs(swing) < max(3 * noise, 1e-6):
+            return a, b, None
+        target = a + swing * 0.632
+        for k, v in enumerate(post):
+            y = v[i]
+            if (swing < 0 and y <= target) or (swing > 0 and y >= target):
+                return a, b, k * DT
+        return a, b, float("inf")
 
-print("\n-- targets --")
-for i, off in TARGETS.items():
-    a, b, t = tau(i)
-    ts = "flat" if t is None else f"{t:.1f}"
-    print(f"d[{i:>3}] {off:>6} {a:10.2f} {b:10.2f} {ts:>8}")
+
+    print(f"{'name':>10} {'hot':>10} {'settled':>10} {'tau63':>8}")
+    print("-- fast references (power / current domain) --")
+    for n, i in FAST.items():
+        a, b, t = tau(i)
+        print(f"{n:>10} {a:10.2f} {b:10.2f} {t if t is None else f'{t:8.1f}':>8}")
+    print("-- slow references (thermal domain) --")
+    for n, i in SLOW.items():
+        a, b, t = tau(i)
+        print(f"{n:>10} {a:10.2f} {b:10.2f} {t if t is None else f'{t:8.1f}':>8}")
+
+    print("\n-- targets --")
+    for i, off in TARGETS.items():
+        a, b, t = tau(i)
+        ts = "flat" if t is None else f"{t:.1f}"
+        print(f"d[{i:>3}] {off:>6} {a:10.2f} {b:10.2f} {ts:>8}")
+
+
+if __name__ == "__main__":
+    main()

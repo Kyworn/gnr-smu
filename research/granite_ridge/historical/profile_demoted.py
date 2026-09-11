@@ -115,42 +115,51 @@ def fit(xs, ys):
 # revisited far more often than the measurement needs redoing. Delete the file to
 # force a fresh run.
 CACHE = Path(__file__).resolve().parent / "demoted_series.bin"
-if CACHE.exists():
-    raw = CACHE.read_bytes()
-    series = [struct.unpack(f"<{N}f", raw[k:k + N * 4])
-              for k in range(0, len(raw), N * 4)]
-    print(f"reusing cached sweep ({len(series)} samples) — delete "
-          f"{CACHE.name} to re-measure")
-else:
-    series = []
-    for name, args, secs in PHASES:
-        print(f"  {name} ...")
-        series.extend(collect(args, secs))
-    CACHE.write_bytes(b"".join(struct.pack(f"<{N}f", *v) for v in series))
-print(f"\n{len(series)} pooled samples\n")
 
-axis_vals = {k: [f(v) for v in series] for k, f in AXES.items()}
-print("axis ranges over the pooled series:")
-for k, vs in axis_vals.items():
-    print(f"  {k:>8}: {min(vs):9.2f} .. {max(vs):9.2f}")
 
-print(f"\n{'idx':>4} {'range':>19}  {'best axis':>9} {'r2':>6} {'slope':>10}  verdict")
-for i, note in TARGETS.items():
-    ys = [v[i] for v in series]
-    ranked = sorted(((fit(axis_vals[k], ys), k) for k in AXES),
-                    key=lambda t: -t[0][0])
-    (r2, a, b), k = ranked[0]
-    (r2b, _, _), kb = ranked[1]
-    if r2 > 0.9:
-        # A single high r2 means little when every axis rises together under load.
-        # Require a clear margin over the runner-up before claiming an axis.
-        verdict = (f"LINEAR in {k}" if r2 - r2b > 0.03
-                   else f"LINEAR but {k}/{kb} indistinguishable ({r2:.3f}/{r2b:.3f})")
-    elif r2 > 0.5:
-        verdict = f"trends with {k}, not linear"
+def main():
+    """Run the preserved historical experiment when invoked explicitly."""
+    if CACHE.exists():
+        raw = CACHE.read_bytes()
+        series = [struct.unpack(f"<{N}f", raw[k:k + N * 4])
+                  for k in range(0, len(raw), N * 4)]
+        print(f"reusing cached sweep ({len(series)} samples) — delete "
+              f"{CACHE.name} to re-measure")
     else:
-        verdict = "no known axis explains it"
-    print(f"{i:>4} {min(ys):8.2f}..{max(ys):-9.2f}  {k:>9} {r2:6.3f} "
-          f"y={a:.4g}*x{b:+.4g}  {verdict}")
-    print(f"     {note}")
-    print("     ranking: " + "  ".join(f"{kk}={rr[0]:.3f}" for rr, kk in ranked[:5]))
+        series = []
+        for name, args, secs in PHASES:
+            print(f"  {name} ...")
+            series.extend(collect(args, secs))
+        CACHE.write_bytes(b"".join(struct.pack(f"<{N}f", *v) for v in series))
+    print(f"\n{len(series)} pooled samples\n")
+
+    axis_vals = {k: [f(v) for v in series] for k, f in AXES.items()}
+    print("axis ranges over the pooled series:")
+    for k, vs in axis_vals.items():
+        print(f"  {k:>8}: {min(vs):9.2f} .. {max(vs):9.2f}")
+
+    print(f"\n{'idx':>4} {'range':>19}  {'best axis':>9} {'r2':>6} {'slope':>10}  verdict")
+    for i, note in TARGETS.items():
+        ys = [v[i] for v in series]
+        ranked = sorted(((fit(axis_vals[k], ys), k) for k in AXES),
+                        key=lambda t: -t[0][0])
+        (r2, a, b), k = ranked[0]
+        (r2b, _, _), kb = ranked[1]
+        if r2 > 0.9:
+            # A single high r2 means little when every axis rises together under load.
+            # Require a clear margin over the runner-up before claiming an axis.
+            verdict = (f"LINEAR in {k}" if r2 - r2b > 0.03
+                       else f"LINEAR but {k}/{kb} indistinguishable ({r2:.3f}/{r2b:.3f})")
+        elif r2 > 0.5:
+            verdict = f"trends with {k}, not linear"
+        else:
+            verdict = "no known axis explains it"
+        print(f"{i:>4} {min(ys):8.2f}..{max(ys):-9.2f}  {k:>9} {r2:6.3f} "
+              f"y={a:.4g}*x{b:+.4g}  {verdict}")
+        print(f"     {note}")
+        print("     ranking: " + "  ".join(
+            f"{kk}={rr[0]:.3f}" for rr, kk in ranked[:5]))
+
+
+if __name__ == "__main__":
+    main()
