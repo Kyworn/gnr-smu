@@ -15,6 +15,11 @@ MARKDOWN = tuple(
     path for path in ROOT.rglob("*.md")
     if ".git" not in path.parts
 )
+MAP_ROW = re.compile(
+    r"^\|\s*(0x[0-9A-Fa-f]+(?:-0x[0-9A-Fa-f]+)?)\s*\|"
+    r"\s*([0-9]+(?:-[0-9]+)?)\s*\|([^|]*)\|\s*([YN])\s*\|"
+    r"([^|]*)\|\s*([^|]*)\|"
+)
 
 
 def github_slug(text):
@@ -68,24 +73,33 @@ class TestPmMapDocumentation(unittest.TestCase):
     def test_9800_map_coverage_and_confidence_summary(self):
         covered = defaultdict(list)
         counts = Counter()
+        labels = {}
         text = MAP.read_text(encoding="utf-8")
         for line_number, line in enumerate(text.splitlines(), 1):
-            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-            if (len(cells) < 6 or
-                    not re.fullmatch(
-                        r"0x[0-9A-Fa-f]+(?:-0x[0-9A-Fa-f]+)?", cells[0]) or
-                    not re.fullmatch(r"\d+(?:-\d+)?", cells[1])):
+            match = MAP_ROW.match(line.strip())
+            if not match:
                 continue
-            first, *last = cells[1].split("-")
+            offset_parts = match.group(1).split("-")
+            offset_first = int(offset_parts[0], 16)
+            offset_final = int(offset_parts[-1], 16)
+            first, *last = match.group(2).split("-")
             final = last[0] if last else first
-            confidence = cells[-1].upper()
-            category = next(
-                (name for name in ("CONFIRMED", "HIGH", "MED", "LOW")
-                 if re.search(rf"\b{name}\b", confidence)),
-                "UNTAGGED",
-            )
+            self.assertEqual(offset_first % 4, 0, f"map line {line_number}")
+            self.assertEqual(offset_final % 4, 0, f"map line {line_number}")
+            self.assertEqual(offset_first // 4, int(first),
+                             f"offset/index start differs on map line {line_number}")
+            if len(offset_parts) == 2:
+                self.assertEqual(
+                    (offset_final - offset_first) // 4 + 1,
+                    int(final) - int(first) + 1,
+                    f"offset/index range width differs on map line {line_number}",
+                )
+            confidence = match.group(6).strip().upper()
+            current = re.match(r"^(CONFIRMED|HIGH|MED|LOW)\b", confidence)
+            category = current.group(1) if current else "UNTAGGED"
             for index in range(int(first), int(final) + 1):
                 covered[index].append(line_number)
+                labels[index] = category
                 counts[category] += 1
 
         self.assertEqual(set(covered), set(range(457)))
@@ -94,23 +108,35 @@ class TestPmMapDocumentation(unittest.TestCase):
             {},
         )
         expected = {
-            "CONFIRMED": 120,
-            "HIGH": 117,
-            "MED": 78,
-            "LOW": 34,
-            "UNTAGGED": 108,
+            "CONFIRMED": 86,
+            "HIGH": 160,
+            "MED": 76,
+            "LOW": 66,
+            "UNTAGGED": 69,
         }
         self.assertEqual(dict(counts), expected)
         summary_lines = {
-            "CONFIRMED": "| CONFIRMED (struct / cross-validated against a system sensor) | 120 |",
-            "HIGH": "| HIGH confidence (strong pattern match) | 117 |",
-            "MED": "| MED confidence (inferred) | 78 |",
-            "LOW": "| LOW confidence (guess) | 34 |",
-            "UNTAGGED": "| Untagged / unknown | 108 |",
+            "CONFIRMED": "| CONFIRMED (struct / cross-validated against a system sensor) | 86 |",
+            "HIGH": "| HIGH confidence (strong pattern match) | 160 |",
+            "MED": "| MED confidence (inferred) | 76 |",
+            "LOW": "| LOW confidence (guess) | 66 |",
+            "UNTAGGED": "| Untagged / unknown | 69 |",
         }
         for category, summary in summary_lines.items():
             with self.subTest(category=category):
                 self.assertIn(summary, text)
+
+        # Current confidence is the leading label in the Confidence column.
+        # Historical annotations such as "HIGH (was CONFIRMED)" must not
+        # promote a field, and a literal pipe later in an annotation must not
+        # make the whole range look untagged.
+        for index in range(333, 341):
+            self.assertEqual(labels[index], "HIGH")
+        for index in range(134, 173):
+            self.assertEqual(labels[index], "HIGH")
+        self.assertEqual(labels[17], "LOW")
+        self.assertEqual(labels[397], "MED")
+        self.assertEqual(labels[66], "UNTAGGED")
 
 
 if __name__ == "__main__":
