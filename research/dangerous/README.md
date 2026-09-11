@@ -16,10 +16,11 @@ Rules:
   `msg_id_blocked()`, and `payload_allowed()` for power limits. The TDC/EDC
   probe additionally requires the exact validated 9800X3D profile before any
   transaction. Do not loosen those gates to make a run succeed.
-- They are never imported by runtime code (`gnr_smu/`), user tools
-  (`tools/`) or tests. Keep it that way.
-- They are excluded from compile-and-import checks only in the sense that
-  nothing may depend on them; they must still compile.
+- They are never imported by runtime code (`gnr_smu/`) or user tools
+  (`tools/`). Tests may import them only under mocks that make any workload
+  or hardware transaction fail immediately.
+- They are compiled and import-checked, but nothing outside the isolated
+  safety tests may depend on them.
 
 `research/vermeer/topology/vermeer_fuse_check.py` is deliberately NOT here:
 it only performs the driver's established 4-byte SMN *read* protocol (write
