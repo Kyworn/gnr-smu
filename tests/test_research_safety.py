@@ -278,22 +278,14 @@ class TestDangerousProbeSafety(unittest.TestCase):
              mock.patch.object(self.probe, "smu_writes_supported",
                                return_value=(True, "safe")) as writes, \
              mock.patch.object(
-                 self.probe, "smu_message_supported",
-                 wraps=self.probe.smu_message_supported) as message, \
-             mock.patch.object(
-                 self.probe, "msg_id_blocked",
-                 wraps=self.probe.msg_id_blocked) as blocked, \
-             mock.patch.object(
-                 self.probe, "payload_allowed",
-                 wraps=self.probe.payload_allowed) as payload, \
+                 self.probe, "smu_command_allowed",
+                 wraps=self.probe.smu_command_allowed) as command, \
              mock.patch.object(self.probe, "_send_transaction",
                                return_value=1) as transaction:
             result = self.probe.send(P9800.ppt_msg, value)
         self.assertEqual(result, 1)
         writes.assert_called_once_with()
-        message.assert_called_once_with(P9800, P9800.ppt_msg)
-        blocked.assert_called_once_with(P9800.ppt_msg, "mp1")
-        payload.assert_called_once_with(P9800, P9800.ppt_msg, value)
+        command.assert_called_once_with(P9800, "mp1", P9800.ppt_msg, value)
         transaction.assert_called_once_with(P9800.ppt_msg, value)
 
 

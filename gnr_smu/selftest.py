@@ -24,6 +24,7 @@ from gnr_smu.safety import (
     msg_id_blocked,
     payload_allowed,
     read_curve_optimizer_offsets,
+    smu_command_allowed,
     smu_message_supported,
     smu_writes_supported,
 )
@@ -159,12 +160,18 @@ def main():
     assert curve_optimizer_read_command(probe_profile, 0) == (0xD5, 0)
     assert curve_optimizer_read_command(probe_profile, 7) == (0xD5, 7 << 20)
     assert decode_curve_optimizer_response(0xFFFFFFE2) == -30
+    assert payload_allowed(probe_profile, 0x3E, 151_000)[0], "measured PPT floor passes"
     assert payload_allowed(probe_profile, 0x3E, 162_000)[0], "stock PPT must pass"
-    assert payload_allowed(probe_profile, 0x3E, 250_000)[0], "the ceiling itself passes"
     assert not payload_allowed(probe_profile, 0x3E, 0)[0], "PPT 0 W locks the CPU"
-    assert not payload_allowed(probe_profile, 0x3E, 250_001)[0], "above the ceiling"
+    assert not payload_allowed(probe_profile, 0x3E, 150_999)[0], "below measured floor"
+    assert not payload_allowed(probe_profile, 0x3E, 162_001)[0], "above measured ceiling"
     assert not payload_allowed(probe_profile, 0x3C, -1)[0], "negative is not a limit"
-    assert payload_allowed(probe_profile, 0x50, 0)[0], "CO is bounded elsewhere"
+    assert not payload_allowed(probe_profile, 0x3E, True)[0], "bool is not an integer payload"
+    msg, arg = curve_optimizer_command(probe_profile, 0, -50)
+    assert payload_allowed(probe_profile, msg, arg)[0], "canonical CO minimum passes"
+    assert not payload_allowed(probe_profile, msg, 0x7FFFFFFF)[0], \
+        "an allowlisted CO message must not authorize an arbitrary payload"
+    assert smu_command_allowed(probe_profile, "mp1", msg, arg)[0]
 
     # An unrecognised mailbox must fail closed, not fall through to "allowed".
     for junk in ("MP1", "rsmu ", "", None):
