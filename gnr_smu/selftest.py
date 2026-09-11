@@ -150,7 +150,7 @@ def main():
     assert vermeer.confidence("core_power") == "high"
     assert vermeer.confidence("core_voltage") == "high"
     assert vermeer.confidence("core_temp") == "confirmed"
-    assert probe_profile.confidence("core_power") == "confirmed"
+    assert probe_profile.confidence("core_power") == "high"
     # Every map key must be a canonical name: anything else is a typo that
     # would otherwise hide as "unsupported".
     for key, prof in PROFILES.items():

@@ -650,7 +650,7 @@ class GNRMaster(QMainWindow):
         for ccd in range(max(1, (self.core_count + 7) // 8)):
             label = f"CCD{ccd + 1} C0 residency" if has_direct_c0 else f"CCD{ccd + 1} active/load estimate"
             self._add_sensor(ccd_summary, f"ccd_c0_{ccd}", label, "%",
-                             "C0 is direct on the 9950X3D; 9800X3D uses 100 - CC6.",
+                             "Direct PM-table C0 residency on mapped profiles.",
                              ACCENT_GREEN)
             if has_direct_c0:
                 self._add_sensor(ccd_summary, f"ccd_cc1_{ccd}", f"CCD{ccd + 1} CC1 residency", "%",
