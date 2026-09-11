@@ -9,7 +9,7 @@ Result on the 9800X3D (v0x620105), 2026-08-26: **0x3C is TDC, 0x3D is EDC.**
 
 The repo claimed both answers at once before this ran. tools/gnr_master.py and the GUI
 sent 0x3D as TDC and 0x3C as EDC; research/dangerous/smu_send.py sent the reverse, which is also
-what ZenStates-Core says and what PR #1 assumes for the 9950X3D. docs/TOFIX.md called the
+what ZenStates-Core says and what PR #1 assumes for the 9950X3D. An old TODO called the
 question closed "via fuzzing" but named no script and recorded no number, and
 9800X3D_BASELINE_0x620105.md only recorded RSP=0x01 — the SMU accepting a message says nothing
 about which limit it moved. The tools have since been corrected to match the read-back.
