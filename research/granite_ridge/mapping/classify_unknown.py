@@ -66,24 +66,25 @@ def table():
 
 
 def measure(threads):
+    p = None
     if threads == 0:
         time.sleep(50)
-        p = None
     else:
         p = subprocess.Popen(["stress-ng", "--matrix", str(threads), "--timeout", "45"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
+    try:
+        if p:
             time.sleep(25)
-            s = [table() for _ in range(20) if not time.sleep(0.25)]
+        s = [table() for _ in range(20) if not time.sleep(0.25)]
+        if p:
             p.wait()
-        except BaseException:
+    finally:
+        if p:
             if p.poll() is None:
                 p.terminate()
             p.wait()
-            raise
+    if p:
         time.sleep(30)
-        return s
-    s = [table() for _ in range(20) if not time.sleep(0.25)]
     return s
 
 

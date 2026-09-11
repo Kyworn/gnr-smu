@@ -122,17 +122,17 @@ def sample(hwmon, rapl):
 
 def run_phase(label, seconds, cmd, hz, fh, hwmon, rapl):
     worker = None
-    if cmd is not None:
-        worker = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL)
-        if worker.poll() is not None:
-            worker.wait()
-            raise RuntimeError(f"workload failed to start: {cmd}")
-    print(f"[{time.strftime('%H:%M:%S')}] phase {label} {seconds}s "
-          f"(k10temp={hwmon}, rapl={sorted(rapl)})", flush=True)
-    deadline = time.monotonic() + seconds
     n = 0
     try:
+        if cmd is not None:
+            worker = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                                      stderr=subprocess.DEVNULL)
+            if worker.poll() is not None:
+                worker.wait()
+                raise RuntimeError(f"workload failed to start: {cmd}")
+        print(f"[{time.strftime('%H:%M:%S')}] phase {label} {seconds}s "
+              f"(k10temp={hwmon}, rapl={sorted(rapl)})", flush=True)
+        deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             row = sample(hwmon, rapl)
             row["phase"] = label

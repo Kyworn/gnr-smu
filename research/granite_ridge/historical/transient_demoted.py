@@ -74,7 +74,7 @@ def main():
 
     def tau(i):
         """Time for the field to fall (or rise) 63 % of the way from its hot value to its
-        settled value. Reported as None when the total swing is too small to time."""
+    settled value. Reported as None when the total swing is too small to time."""
         a = statistics.median([v[i] for v in hot])
         b = statistics.median([v[i] for v in cold])
         swing = b - a

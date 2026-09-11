@@ -44,26 +44,27 @@ def med(samples, fn):
 
 
 def measure(threads):
+    p = None
     if threads == 0:
         print("  idle (50 s settle) ...")
         time.sleep(50)
-        p = None
     else:
         print(f"  stress-ng --matrix {threads} (25 s settle) ...")
         p = subprocess.Popen(["stress-ng", "--matrix", str(threads), "--timeout", "45"],
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
+    try:
+        if p:
             time.sleep(25)
-            s = [table() for _ in range(20) if not time.sleep(0.25)]
+        s = [table() for _ in range(20) if not time.sleep(0.25)]
+        if p:
             p.wait()
-        except BaseException:
+    finally:
+        if p:
             if p.poll() is None:
                 p.terminate()
             p.wait()
-            raise
+    if p:
         time.sleep(30)  # cool down so the next level starts from a comparable place
-        return s
-    s = [table() for _ in range(20) if not time.sleep(0.25)]
     return s
 
 

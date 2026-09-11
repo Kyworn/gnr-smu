@@ -110,11 +110,10 @@ def main():
         time.sleep(5)
         a = medians(sample(profile, 15))
         p.wait()
-    except BaseException:
+    finally:
         if p.poll() is None:
             p.terminate()
         p.wait()
-        raise
     report("A: ALU (ackermann, low L3 traffic)", a, profile)
 
     print("\ncool-down 15s ...")
@@ -126,11 +125,10 @@ def main():
         time.sleep(5)
         b = medians(sample(profile, 15))
         p.wait()
-    except BaseException:
+    finally:
         if p.poll() is None:
             p.terminate()
         p.wait()
-        raise
     report("B: L3 cache-thrash", b, profile)
 
     print("\n=== Comparison (delta over baseline, relative to CCD0-avg rise) ===")

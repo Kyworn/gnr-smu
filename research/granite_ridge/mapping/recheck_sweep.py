@@ -81,11 +81,10 @@ def main():
     try:
         l_pm, l_tctl, l_tccd, l_core = settle(60, "LOAD (steady state)")
         p.wait()
-    except BaseException:
+    finally:
         if p.poll() is None:
             p.terminate()
         p.wait()
-        raise
 
     dt = l_tctl - i_tctl
     print(f"\nTctl {i_tctl:.2f} -> {l_tctl:.2f} (delta {dt:+.2f})")

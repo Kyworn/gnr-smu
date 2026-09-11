@@ -236,11 +236,10 @@ def main():
         # Must be read before stress-ng exits, see the check below.
         load_cpufreq = cpufreq_ghz()
         p.wait()
-    except BaseException:
+    finally:
         if p.poll() is None:
             p.terminate()
         p.wait()
-        raise
     print(f"  Tctl {idle_k10:.1f} -> {load_k10:.1f} C\n")
 
     # ---------------------------------------------------------------- STATIC claims
@@ -387,11 +386,10 @@ def main():
             series.append(raw_table()[212])
             time.sleep(3)
         p2.wait()
-    except BaseException:
+    finally:
         if p2.poll() is None:
             p2.terminate()
         p2.wait()
-        raise
     drift = (series[-1] - series[0]) / max(series[0], 1)
     plateau = abs(drift) < 0.10
     print(f"  {'ok  ' if plateau else 'FAIL'} d[212] over 15 s of steady load: "

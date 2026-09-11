@@ -75,11 +75,10 @@ def run(args, settle, window):
         time.sleep(settle)
         out = sample(window)
         p.wait()
-    except BaseException:
+    finally:
         if p.poll() is None:
             p.terminate()
         p.wait()
-        raise
     return out
 
 

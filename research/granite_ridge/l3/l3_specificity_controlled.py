@@ -92,11 +92,10 @@ def measure(profile, cpus, args, label):
         time.sleep(LOAD_SECONDS - SAMPLE_SECONDS)
         med = medians(sample(profile, SAMPLE_SECONDS))
         p.wait()
-    except BaseException:
+    finally:
         if p.poll() is None:
             p.terminate()
         p.wait()
-        raise
     print(f"  [{label}] CCD0-avg={core_avg(profile, med):.2f}  Tctl={med[11]:.2f}")
     return med
 
