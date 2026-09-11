@@ -298,6 +298,11 @@ Writing to the SMU mailbox can destabilise or damage hardware. Specifics that ma
   with its own ID namespace, and `0x04`/`0x05` there are the ordinary PM-table read.
 - Stock limits are 162 W PPT / 120 A TDC / 180 A EDC on the 9800X3D and 200 W /
   160 A / 225 A on the 9950X3D. The reset paths select the matching profile.
+- A firmware argument or frontend range is not a safety claim. The centralized
+  payload gate accepts only the interval bracketed by recorded write/readback evidence:
+  151-162 W PPT, 111-120 A TDC and 111-180 A EDC on the 9800X3D. The 9950X3D record
+  does not preserve exact altered test values, so only its exact stock/reset values
+  are authorized until reproducible boundary evidence is published.
 - 3D V-Cache runs under a tighter thermal ceiling than the rest of the die. The
   table reports 88 °C on the tested 9800X3D and 95 °C on the tested 9950X3D.
 - SMU settings are volatile — a reboot reverts everything to BIOS constraints. That is

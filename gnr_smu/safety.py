@@ -85,7 +85,7 @@ def smu_message_supported(profile, msg_id):
 
 
 def payload_allowed(profile, msg_id, arg0):
-    """(ok, reason) for the *argument* of a power-limit write.
+    """Return whether ``arg0`` is established for this profile and MP1 message.
 
     Nothing checked this before: both front-ends bounded the number in their own
     spinbox and then handed an unchecked arg0 to the sender, so any direct caller —
@@ -93,25 +93,82 @@ def payload_allowed(profile, msg_id, arg0):
     whatever it liked. 9800X3D_BASELINE_0x620105.md records ``ppt 0`` locking the CPU to
     606 MHz, which is the concrete reason a floor exists at all.
 
-    Message IDs that are not power limits pass through: Curve Optimizer arguments are
-    built and range-checked by curve_optimizer_command().
+    Power-limit ranges are evidence-backed and separate from the broader values a
+    frontend or firmware encoding can represent. Curve Optimizer payloads must exactly
+    match a pair produced by curve_optimizer_command(); an allowlisted ID alone never
+    authorizes an arbitrary argument.
     """
-    bounds = {profile.ppt_msg: ("PPT", "W", profile.stock_ppt, profile.max_ppt),
-              profile.tdc_msg: ("TDC", "A", profile.stock_tdc, profile.max_tdc),
-              profile.edc_msg: ("EDC", "A", profile.stock_edc, profile.max_edc)}
-    if msg_id not in bounds:
+    power = {
+        profile.ppt_msg: ("PPT", "W", profile.ppt_write_bounds),
+        profile.tdc_msg: ("TDC", "A", profile.tdc_write_bounds),
+        profile.edc_msg: ("EDC", "A", profile.edc_write_bounds),
+    }
+    if msg_id in power:
+        name, unit, bounds = power[msg_id]
+        if type(arg0) is not int:
+            return False, f"{name} argument {arg0!r} is not an integer"
+        if arg0 <= 0:
+            return False, (f"{name} {arg0 / 1000:g} {unit} is not a positive limit; "
+                           "zero is a documented total throttle")
+        if bounds is None:
+            return False, (f"no evidence-backed {name} write range exists for "
+                           f"{profile.name}")
+        minimum, maximum = bounds
+        low, high = minimum * 1000, maximum * 1000
+        value = arg0 / 1000.0
+        if not low <= arg0 <= high:
+            return False, (f"{name} {value:g} {unit} is outside the evidence-backed "
+                           f"{minimum:g}-{maximum:g} {unit} write range for "
+                           f"{profile.name}")
         return True, None
-    name, unit, stock, ceiling = bounds[msg_id]
-    if not isinstance(arg0, int) or arg0 < 0:
-        return False, f"{name} argument {arg0!r} is not a non-negative integer"
-    value = arg0 / 1000.0
-    if value <= 0:
-        return False, (f"{name} 0 {unit} is a total throttle, not a limit — the CPU "
-                       "locks to its minimum multiplier until reboot")
-    if value > ceiling:
-        return False, (f"{name} {value:g} {unit} is above the {ceiling} {unit} ceiling "
-                       f"for {profile.name} (stock is {stock} {unit})")
-    return True, None
+
+    if type(arg0) is not int:
+        return False, f"payload {arg0!r} is not an integer"
+    try:
+        for core in range(profile.cores):
+            for margin in range(-50, 21):
+                if curve_optimizer_command(profile, core, margin) == (msg_id, arg0):
+                    return True, None
+    except ValueError:
+        pass
+    return False, (f"payload 0x{arg0 & 0xFFFFFFFF:08X} is not a canonical "
+                   f"Curve Optimizer command for {profile.name}")
+
+
+def smu_command_allowed(profile, mailbox, msg_id, arg0):
+    """Validate one complete mailbox command before any transaction is possible."""
+    if profile is None:
+        return False, "no live hardware profile"
+    if not profile.allow_smu_writes:
+        return False, f"SMU commands are not validated on {profile.name}"
+    if type(msg_id) is not int:
+        return False, f"message ID {msg_id!r} is not an integer"
+    if type(arg0) is not int:
+        return False, f"payload {arg0!r} is not an integer"
+    blocked, reason = msg_id_blocked(msg_id, mailbox)
+    if blocked:
+        return False, reason
+
+    if mailbox == "mp1":
+        if not smu_message_supported(profile, msg_id):
+            return False, (f"MP1 0x{msg_id:02X} is not allowlisted for "
+                           f"{profile.name}")
+        return payload_allowed(profile, msg_id, arg0)
+
+    # RSMU payloads are read/query protocol arguments, but the transaction still
+    # writes smu_args/rsmu_cmd or raw mailbox registers. Validate the exact known
+    # command+argument pairs rather than treating the allowlisted ID as sufficient.
+    if msg_id == 0x04 and arg0 == 1:
+        return True, None
+    if msg_id == 0x05 and arg0 == 0:
+        return True, None
+    if msg_id == profile.co_get_msg:
+        valid = {curve_optimizer_read_command(profile, core)
+                 for core in range(profile.cores)}
+        if (msg_id, arg0) in valid:
+            return True, None
+    return False, (f"RSMU 0x{msg_id:02X} payload 0x{arg0:08X} is not an "
+                   f"established command for {profile.name}")
 
 
 def curve_optimizer_command(profile, core, margin):
@@ -155,8 +212,8 @@ def _read_curve_optimizer_offsets(profile, sysfs_base):
     offsets = []
     for core in range(profile.cores):
         msg_id, arg0 = curve_optimizer_read_command(profile, core)
-        blocked, reason = msg_id_blocked(msg_id, mailbox="rsmu")
-        if blocked:
+        allowed, reason = smu_command_allowed(profile, "rsmu", msg_id, arg0)
+        if not allowed:
             raise RuntimeError(reason)
         with open(args_path, "wb") as f:
             f.write(struct.pack("<6I", arg0, 0, 0, 0, 0, 0))

@@ -7,9 +7,8 @@ sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 from gnr_smu.safety import (curve_optimizer_command,  # noqa: E402
-                            msg_id_blocked, payload_allowed,
-                            smu_message_supported,
                             read_curve_optimizer_offsets,
+                            smu_command_allowed,
                             smu_writes_supported)
 
 # Stock limits and MP1 message IDs live on the hardware profile in
@@ -28,20 +27,8 @@ def apply_cmd(msg_id, arg0):
     if not ok:
         print(f"[BLOCKED] SMU writes disabled: {why}")
         return False
-    # Two different questions, and an ID has to clear both: the allowlist says what
-    # this profile is known to accept, the never-send list what nothing may send on any
-    # part — including IDs the SMU answers happily.
     profile, _ = get_hardware_profile()
-    if not smu_message_supported(profile, msg_id):
-        print(f"[BLOCKED] MSG 0x{msg_id:02x} is not in the {profile.name} allowlist")
-        return False
-    blocked, reason = msg_id_blocked(msg_id)
-    if blocked:
-        print(f"[BLOCKED] guardrail: {reason}")
-        return False
-    # The ID being allowed says nothing about the number riding with it. This is the
-    # only place the argument is checked; the menu's own bounds are a convenience.
-    ok, why = payload_allowed(profile, msg_id, arg0)
+    ok, why = smu_command_allowed(profile, "mp1", msg_id, arg0)
     if not ok:
         print(f"[BLOCKED] {why}")
         return False

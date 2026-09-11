@@ -31,6 +31,7 @@ from .safety import (
     msg_id_blocked,
     payload_allowed,
     read_curve_optimizer_offsets,
+    smu_command_allowed,
     smu_message_supported,
     smu_writes_supported,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "msg_id_blocked",
     "payload_allowed",
     "read_curve_optimizer_offsets",
+    "smu_command_allowed",
     "smu_message_supported",
     "smu_writes_supported",
     "COMMON_FIELDS",

@@ -18,9 +18,9 @@ CONFIG_PATH = os.path.join(
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
 from gnr_smu.hardware import get_hardware_profile, hardware_supported  # noqa: E402
-from gnr_smu.safety import (curve_optimizer_command, msg_id_blocked,  # noqa: E402
-                            payload_allowed, read_curve_optimizer_offsets,
-                            smu_message_supported, smu_writes_supported)
+from gnr_smu.safety import (curve_optimizer_command,  # noqa: E402
+                            read_curve_optimizer_offsets,
+                            smu_command_allowed, smu_writes_supported)
 
 # The MP1 message IDs now come from the hardware profile, per part. This file used to
 # name them inline with 0x3D as TDC and 0x3C as EDC, an emphatic comment on each line
@@ -899,24 +899,7 @@ class GNRMaster(QMainWindow):
         if not ok:
             self.log_msg(f"GUARDRAIL: SMU writes disabled — {why}", "ERROR", ACCENT_RED)
             return False
-        # An ID has to clear both: the allowlist is what this profile is known to
-        # accept, the never-send list what nothing may send on any part.
-        if not smu_message_supported(self.profile, msg_id):
-            self.log_msg(
-                f"GUARDRAIL: MSG {hex(msg_id)} is not in the {self.profile.name} "
-                "command allowlist",
-                "ERROR", ACCENT_RED,
-            )
-            return False
-        blocked, reason = msg_id_blocked(msg_id)
-        if blocked:
-            self.log_msg(f"GUARDRAIL: {reason}", "ERROR", ACCENT_RED)
-            return False
-        # The ID being allowed says nothing about the number riding with it, and the
-        # arg0 & 0xFFFFFFFF below would happily turn a negative spinbox value into
-        # four billion milliamps. The spinbox bounds are a convenience; this is the
-        # check.
-        ok, why = payload_allowed(self.profile, msg_id, arg0)
+        ok, why = smu_command_allowed(self.profile, "mp1", msg_id, arg0)
         if not ok:
             self.log_msg(f"GUARDRAIL: {why}", "ERROR", ACCENT_RED)
             return False

@@ -48,10 +48,12 @@ class HardwareProfile:
     stock_tdc: int
     stock_edc: int
     co_mode: str
-    # Ceilings for the three power limits, in the same units as stock_*. These are the
-    # maxima the front-ends already offered, not a validated safe envelope: above
-    # stock is PBO territory and nothing here has measured where it stops being safe.
-    # They exist so the *argument* is bounded somewhere other than a spinbox.
+    # Legacy frontend ceilings for the three power limits, in the same units as
+    # stock_*. They are not a validated write envelope. The wire format can represent
+    # the much broader uint32 milli-unit range, which is also not a safety claim and is
+    # deliberately not modelled as an allowed range. The separate *_write_bounds
+    # tuples are the evidence-backed inclusive ranges accepted by the centralized
+    # payload gate; None means no power-limit write is established.
     # Raw SMN mailbox addresses, for the research tools that drive the mailbox through
     # setpci instead of the driver. Measured on the 9800X3D; a profile that leaves them
     # empty makes those tools refuse rather than poke the same registers on a part
@@ -62,6 +64,9 @@ class HardwareProfile:
     max_ppt: int = 0
     max_tdc: int = 0
     max_edc: int = 0
+    ppt_write_bounds: Optional[tuple] = None
+    tdc_write_bounds: Optional[tuple] = None
+    edc_write_bounds: Optional[tuple] = None
     co_msg: int = 0
     # Granite Ridge exposes the active per-core Curve Optimizer value through
     # the read-only RSMU GetDldoPsmMargin command.  This is separate from the
@@ -242,6 +247,11 @@ PROFILES = {
         mp1_smn=(0x3B10530, 0x3B1057C, 0x3B109C4),
         rsmu_smn=(0x3B10524, 0x3B10570, 0x3B10A40),
         max_ppt=250, max_tdc=200, max_edc=250,
+        # probe_tdc_edc.py recorded successful writes at 151 W / 111 A and
+        # restoration to the measured stock limits.  No broader range is claimed.
+        ppt_write_bounds=(151, 162),
+        tdc_write_bounds=(111, 120),
+        edc_write_bounds=(111, 180),
         co_mode="legacy_per_message",
         co_get_msg=0xD5,
         allow_smu_writes=True,
@@ -295,6 +305,12 @@ PROFILES = {
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=200, stock_tdc=160, stock_edc=225,
         max_ppt=300, max_tdc=250, max_edc=300,
+        # The repository records real-machine validation of these controls but no
+        # exact altered values.  Only the exact measured stock/reset values form a
+        # defensible envelope until the write/readback evidence is published.
+        ppt_write_bounds=(200, 200),
+        tdc_write_bounds=(160, 160),
+        edc_write_bounds=(225, 225),
         co_mode="packed_core_mask", co_msg=0x35,
         co_get_msg=0xD5,
         allow_smu_writes=True,

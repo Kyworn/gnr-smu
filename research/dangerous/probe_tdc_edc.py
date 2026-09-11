@@ -44,8 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 from gnr_smu.profiles import PROFILES  # noqa: E402
-from gnr_smu.safety import (msg_id_blocked, payload_allowed,
-                            smu_message_supported,
+from gnr_smu.safety import (smu_command_allowed,
                             smu_writes_supported)  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
@@ -97,13 +96,7 @@ def require_probe_profile():
 def authorize_write(msg_id, arg0):
     """Apply every centralized MP1 gate before the low-level transaction."""
     profile = require_probe_profile()
-    if not smu_message_supported(profile, msg_id):
-        raise RuntimeError(
-            f"MP1 0x{msg_id:02X} is not allowlisted for {profile.name}")
-    blocked, reason = msg_id_blocked(msg_id, "mp1")
-    if blocked:
-        raise RuntimeError(reason)
-    ok, reason = payload_allowed(profile, msg_id, arg0)
+    ok, reason = smu_command_allowed(profile, "mp1", msg_id, arg0)
     if not ok:
         raise RuntimeError(reason)
     return profile

@@ -37,6 +37,7 @@ from gnr_smu.safety import (  # noqa: E402,F401
     msg_id_blocked,
     payload_allowed,
     read_curve_optimizer_offsets,
+    smu_command_allowed,
     smu_message_supported,
     smu_writes_supported,
 )

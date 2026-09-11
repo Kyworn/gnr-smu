@@ -12,10 +12,12 @@ Rules:
 
 - Do not run these casually. Do not run them on unvalidated hardware.
 - They refuse via the `gnr_smu` safety gates: live-profile detection,
-  `smu_writes_supported()`, `smu_message_supported()` for MP1,
-  `msg_id_blocked()`, and `payload_allowed()` for power limits. The TDC/EDC
-  probe additionally requires the exact validated 9800X3D profile before any
-  transaction. Do not loosen those gates to make a run succeed.
+  `smu_writes_supported()`, and complete message-plus-payload validation through
+  `smu_command_allowed()`. Power limits are confined to evidence-backed profile
+  ranges and Curve Optimizer payloads must match the canonical encoder; an allowlisted
+  message ID alone is not authorization. The TDC/EDC probe additionally requires the
+  exact validated 9800X3D profile before any transaction. Do not loosen those gates
+  to make a run succeed.
 - They are never imported by runtime code (`gnr_smu/`) or user tools
   (`tools/`). Tests may import them only under mocks that make any workload
   or hardware transaction fail immediately.

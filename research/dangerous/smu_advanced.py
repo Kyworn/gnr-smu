@@ -13,8 +13,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
-from gnr_smu.safety import (msg_id_blocked, payload_allowed,
-                            smu_message_supported,
+from gnr_smu.safety import (smu_command_allowed,
                             smu_writes_supported)  # noqa: E402
 
 
@@ -30,16 +29,9 @@ def guard(msg_id, mailbox="mp1", arg0=0):
     ok, why = smu_writes_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
-    blocked, reason = msg_id_blocked(msg_id, mailbox)
-    if blocked:
+    ok, reason = smu_command_allowed(profile, mailbox, msg_id, arg0)
+    if not ok:
         sys.exit(f"REFUSED: {reason}")
-    if mailbox == "mp1" and not smu_message_supported(profile, msg_id):
-        sys.exit(f"REFUSED: MP1 0x{msg_id:02X} is not allowlisted for "
-                 f"{profile.name}")
-    if mailbox == "mp1":
-        ok, reason = payload_allowed(profile, msg_id, arg0)
-        if not ok:
-            sys.exit(f"REFUSED: {reason}")
 
 
 
