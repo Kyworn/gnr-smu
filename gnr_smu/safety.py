@@ -148,18 +148,8 @@ def decode_curve_optimizer_response(value):
     return raw if raw < 0x8000 else raw - 0x10000
 
 
-def read_curve_optimizer_offsets(profile, sysfs_base="/sys/kernel/ryzen_smu_drv"):
-    """Read every active per-core CO margin through RSMU GetDldoPsmMargin.
-
-    Although the operation is read-only at the firmware level, the ryzen_smu
-    protocol writes the query argument and command ID to sysfs first, so this
-    normally requires root. Any rejected/truncated response fails closed.
-    Profiles without validated SMU commands are refused outright: even a
-    conceptually read-only query performs a sysfs write on this path.
-    """
-    if not profile.allow_smu_writes:
-        raise RuntimeError(
-            f"SMU queries are not validated on {profile.name}")
+def _read_curve_optimizer_offsets(profile, sysfs_base):
+    """Perform the RSMU transaction after the live profile has been authorized."""
     args_path = f"{sysfs_base}/smu_args"
     cmd_path = f"{sysfs_base}/rsmu_cmd"
     offsets = []
@@ -186,3 +176,26 @@ def read_curve_optimizer_offsets(profile, sysfs_base="/sys/kernel/ryzen_smu_drv"
         returned_arg0 = struct.unpack("<6I", response_args)[0]
         offsets.append(decode_curve_optimizer_response(returned_arg0))
     return offsets
+
+
+def read_curve_optimizer_offsets(profile, sysfs_base="/sys/kernel/ryzen_smu_drv"):
+    """Read every active per-core CO margin through RSMU GetDldoPsmMargin.
+
+    Although the operation is read-only at the firmware level, the ryzen_smu
+    protocol writes the query argument and command ID to sysfs first, so this
+    normally requires root. Any rejected/truncated response fails closed.
+    The supplied profile must exactly match the profile detected on the live
+    machine. Unsupported, mismatched and write-blocked profiles are refused
+    before either sysfs file is opened for writing.
+    """
+    live_profile, why = get_hardware_profile()
+    if live_profile is None:
+        raise RuntimeError(f"SMU query refused: {why}")
+    if profile != live_profile:
+        raise RuntimeError(
+            f"SMU query profile mismatch: supplied {profile.name}, "
+            f"detected {live_profile.name}")
+    if not live_profile.allow_smu_writes:
+        raise RuntimeError(
+            f"SMU queries are not validated on {live_profile.name}")
+    return _read_curve_optimizer_offsets(live_profile, sysfs_base)

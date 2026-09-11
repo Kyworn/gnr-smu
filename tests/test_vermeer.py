@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 
 from gnr_smu import hardware as hwgate  # noqa: E402
+from gnr_smu import safety  # noqa: E402
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 from gnr_smu.profiles import (GLOBAL_FIELD_NAMES, PROFILES,  # noqa: E402
                               validate_profile_globals)
@@ -118,8 +119,10 @@ class TestVermeerDetection(unittest.TestCase):
             curve_optimizer_command(VERMEER, 0, -30)
 
     def test_rsmu_readback_refuses(self):
-        with self.assertRaises(RuntimeError):
-            read_curve_optimizer_offsets(VERMEER)
+        with mock.patch.object(safety, "get_hardware_profile",
+                               return_value=(VERMEER, "matched")):
+            with self.assertRaises(RuntimeError):
+                read_curve_optimizer_offsets(VERMEER)
 
     def test_global_map_is_exactly_the_validated_set(self):
         expected = {"fclk": 48, "uclk": 50, "mclk": 51, "vsoc": 45,
@@ -156,6 +159,68 @@ class TestCoreTemperatureValidator(unittest.TestCase):
                 f.write("3\n")
             with mock.patch("validate_core_temps.glob.glob", return_value=[cpu]):
                 self.assertEqual(physical_core_cpus(), [7])
+
+
+class TestCurveOptimizerLiveProfileGate(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.args_path = os.path.join(self.tmp.name, "smu_args")
+        self.cmd_path = os.path.join(self.tmp.name, "rsmu_cmd")
+        with open(self.args_path, "wb") as f:
+            f.write(b"A" * 24)
+        with open(self.cmd_path, "wb") as f:
+            f.write(b"C" * 4)
+        self.before = self._tree_contents()
+
+    def _tree_contents(self):
+        contents = {}
+        for root, _, names in os.walk(self.tmp.name):
+            for name in names:
+                path = os.path.join(root, name)
+                with open(path, "rb") as f:
+                    contents[os.path.relpath(path, self.tmp.name)] = f.read()
+        return contents
+
+    def assert_zero_writes(self):
+        self.assertEqual(self._tree_contents(), self.before)
+
+    def test_matching_live_profiles_can_proceed(self):
+        for key in ((0x620105, 1828, 8), (0x620205, 2452, 16)):
+            profile = PROFILES[key]
+            expected = [-30] * profile.cores
+            with self.subTest(profile=profile.name), \
+                    mock.patch.object(safety, "get_hardware_profile",
+                                      return_value=(profile, "matched")), \
+                    mock.patch.object(safety, "_read_curve_optimizer_offsets",
+                                      return_value=expected) as transaction:
+                self.assertEqual(
+                    read_curve_optimizer_offsets(profile, self.tmp.name), expected)
+                transaction.assert_called_once_with(profile, self.tmp.name)
+
+    def test_mismatched_profile_performs_zero_writes(self):
+        supplied = PROFILES[(0x620105, 1828, 8)]
+        live = PROFILES[(0x620205, 2452, 16)]
+        with mock.patch.object(safety, "get_hardware_profile",
+                               return_value=(live, "matched")):
+            with self.assertRaisesRegex(RuntimeError, "profile mismatch"):
+                read_curve_optimizer_offsets(supplied, self.tmp.name)
+        self.assert_zero_writes()
+
+    def test_unsupported_hardware_performs_zero_writes(self):
+        supplied = PROFILES[(0x620105, 1828, 8)]
+        with mock.patch.object(safety, "get_hardware_profile",
+                               return_value=(None, "unsupported test hardware")):
+            with self.assertRaisesRegex(RuntimeError, "unsupported test hardware"):
+                read_curve_optimizer_offsets(supplied, self.tmp.name)
+        self.assert_zero_writes()
+
+    def test_vermeer_performs_zero_writes(self):
+        with mock.patch.object(safety, "get_hardware_profile",
+                               return_value=(VERMEER, "matched")):
+            with self.assertRaisesRegex(RuntimeError, "not validated"):
+                read_curve_optimizer_offsets(VERMEER, self.tmp.name)
+        self.assert_zero_writes()
 
 
 class TestVermeerSlots(unittest.TestCase):
