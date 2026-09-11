@@ -13,22 +13,33 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
-from gnr_smu.safety import (msg_id_blocked,
+from gnr_smu.safety import (msg_id_blocked, payload_allowed,
+                            smu_message_supported,
                             smu_writes_supported)  # noqa: E402
 
 
-def guard(msg_id, mailbox="mp1"):
+def guard(msg_id, mailbox="mp1", arg0=0):
     """Refuse the send, or return None. Both checks matter here and neither existed
     before: these tools reach the mailbox through raw setpci/SMN, so they bypass the
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
     addresses below are also this-part-specific — on another CPU they are just some
     other register."""
+    profile, why = get_hardware_profile()
+    if profile is None:
+        sys.exit(f"REFUSED: {why}")
     ok, why = smu_writes_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
     blocked, reason = msg_id_blocked(msg_id, mailbox)
     if blocked:
         sys.exit(f"REFUSED: {reason}")
+    if mailbox == "mp1" and not smu_message_supported(profile, msg_id):
+        sys.exit(f"REFUSED: MP1 0x{msg_id:02X} is not allowlisted for "
+                 f"{profile.name}")
+    if mailbox == "mp1":
+        ok, reason = payload_allowed(profile, msg_id, arg0)
+        if not ok:
+            sys.exit(f"REFUSED: {reason}")
 
 
 
@@ -67,7 +78,7 @@ def smn_write(addr, value):
 def smu_send(mb_type, msg_id, arg0=0, timeout=1.0):
     # The mailbox has to reach the guard: the never-send list is MP1's, and the
     # pmtable path below rides RSMU 0x04/0x05, which collide with dangerous MP1 IDs.
-    guard(msg_id, mb_type)
+    guard(msg_id, mb_type, arg0)
     # Explicit, because the old `else` meant an unrecognised name silently selected
     # RSMU — the same typo that would have slipped past the guard above.
     if mb_type not in ("mp1", "rsmu"):

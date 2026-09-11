@@ -38,6 +38,15 @@ import math
 import struct
 import sys
 import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
+from gnr_smu.safety import (msg_id_blocked, payload_allowed,
+                            smu_message_supported,
+                            smu_writes_supported)  # noqa: E402
 
 PM = "/sys/kernel/ryzen_smu_drv/pm_table"
 VERSION_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_version"
@@ -45,6 +54,7 @@ MP1 = "/sys/kernel/ryzen_smu_drv/mp1_smu_cmd"
 ARGS = "/sys/kernel/ryzen_smu_drv/smu_args"
 
 EXPECTED_PM_VERSION = 0x620105
+EXPECTED_PROFILE = PROFILES[(0x620105, 1828, 8)]
 
 MSG_PPT = 0x3E
 
@@ -73,7 +83,33 @@ def read_limits():
     return d[I_PPT], d[I_TDC], d[I_EDC]
 
 
-def send(msg_id, arg0):
+def require_probe_profile():
+    """Authorize this exact experiment without touching a mailbox file."""
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise RuntimeError(f"probe requires the validated 9800X3D profile: {why}")
+    ok, reason = smu_writes_supported()
+    if not ok:
+        raise RuntimeError(reason)
+    return profile
+
+
+def authorize_write(msg_id, arg0):
+    """Apply every centralized MP1 gate before the low-level transaction."""
+    profile = require_probe_profile()
+    if not smu_message_supported(profile, msg_id):
+        raise RuntimeError(
+            f"MP1 0x{msg_id:02X} is not allowlisted for {profile.name}")
+    blocked, reason = msg_id_blocked(msg_id, "mp1")
+    if blocked:
+        raise RuntimeError(reason)
+    ok, reason = payload_allowed(profile, msg_id, arg0)
+    if not ok:
+        raise RuntimeError(reason)
+    return profile
+
+
+def _send_transaction(msg_id, arg0):
     """Returns the SMU response byte. 1 is OK; anything else means the write did not
     take, which is itself an answer worth printing rather than swallowing."""
     with open(ARGS, "wb") as f:
@@ -83,6 +119,12 @@ def send(msg_id, arg0):
     time.sleep(SETTLE)
     with open(MP1, "rb") as f:
         return struct.unpack("<I", f.read(4))[0]
+
+
+def send(msg_id, arg0):
+    """Authorize and perform one probe or restore transaction."""
+    authorize_write(msg_id, arg0)
+    return _send_transaction(msg_id, arg0)
 
 
 def probe(msg_id, arg0, label, unit, baseline):
@@ -147,6 +189,10 @@ def restore_one(msg_id, field, origin):
 
 def main():
     try:
+        profile = require_probe_profile()
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSED: {exc}") from exc
+    try:
         with open(VERSION_PATH, "rb") as f:
             ver = struct.unpack("<I", f.read(4))[0]
     except OSError as e:
@@ -169,6 +215,22 @@ def main():
     if not all(math.isfinite(v) for v in origin):
         sys.exit(f"baseline reads back non-finite ({origin}) — the offsets or the "
                  "driver are not giving usable floats. Refusing to write.")
+
+    # Refuse before the first transaction unless both probe values and every possible
+    # restoration value pass the centralized bounds for the live profile.
+    planned = [
+        (profile.ppt_msg, PROBE_PPT_W * 1000),
+        (profile.tdc_msg, PROBE_A * 1000),
+        (profile.edc_msg, PROBE_A * 1000),
+        (profile.ppt_msg, int(round(origin[0] * 1000))),
+        (profile.tdc_msg, int(round(origin[1] * 1000))),
+        (profile.edc_msg, int(round(origin[2] * 1000))),
+    ]
+    try:
+        for msg_id, arg0 in planned:
+            authorize_write(msg_id, arg0)
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSED before first write: {exc}") from exc
 
     verdict = {}
     # Every ID this run has written through, whether or not it was attributed. The

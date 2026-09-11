@@ -13,6 +13,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from gnr_smu.hardware import get_hardware_profile  # noqa: E402
 from gnr_smu.safety import (msg_id_blocked, payload_allowed,
+                            smu_message_supported,
                             smu_writes_supported)  # noqa: E402
 
 
@@ -22,16 +23,21 @@ def guard(msg_id, arg0=None):
     ryzen_smu driver's own guardrails as well as the front-ends'. The SMN mailbox
     addresses below are also this-part-specific — on another CPU they are just some
     other register."""
+    profile, why = get_hardware_profile()
+    if profile is None:
+        sys.exit(f"REFUSED: {why}")
     ok, why = smu_writes_supported()
     if not ok:
         sys.exit(f"REFUSED: {why}")
+    if not smu_message_supported(profile, msg_id):
+        sys.exit(f"REFUSED: MP1 0x{msg_id:02X} is not allowlisted for "
+                 f"{profile.name}")
     # MP1-only tool: the addresses below are the MP1 mailbox, so the MP1 list applies.
     blocked, reason = msg_id_blocked(msg_id, "mp1")
     if blocked:
         sys.exit(f"REFUSED: {reason}")
     if arg0 is not None:
-        p, _ = get_hardware_profile()
-        ok, why = payload_allowed(p, msg_id, arg0)
+        ok, why = payload_allowed(profile, msg_id, arg0)
         if not ok:
             sys.exit(f"REFUSED: {why}")
 

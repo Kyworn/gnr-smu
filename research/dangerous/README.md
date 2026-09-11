@@ -11,8 +11,11 @@ Every script in this directory can perform hardware writes:
 Rules:
 
 - Do not run these casually. Do not run them on unvalidated hardware.
-- They refuse via the `gnr_smu` safety gates (`smu_writes_supported()`,
-  `msg_id_blocked()`) — do not loosen those gates to make a run succeed.
+- They refuse via the `gnr_smu` safety gates: live-profile detection,
+  `smu_writes_supported()`, `smu_message_supported()` for MP1,
+  `msg_id_blocked()`, and `payload_allowed()` for power limits. The TDC/EDC
+  probe additionally requires the exact validated 9800X3D profile before any
+  transaction. Do not loosen those gates to make a run succeed.
 - They are never imported by runtime code (`gnr_smu/`), user tools
   (`tools/`) or tests. Keep it that way.
 - They are excluded from compile-and-import checks only in the sense that
