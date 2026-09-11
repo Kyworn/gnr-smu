@@ -185,6 +185,16 @@ class TestCurveOptimizerLiveProfileGate(unittest.TestCase):
     def assert_zero_writes(self):
         self.assertEqual(self._tree_contents(), self.before)
 
+    def assert_refused_without_writes(self, supplied, live_result, message):
+        with mock.patch.object(safety, "get_hardware_profile",
+                               return_value=live_result), \
+                mock.patch.object(
+                    safety, "_read_curve_optimizer_offsets") as transaction:
+            with self.assertRaisesRegex(RuntimeError, message):
+                read_curve_optimizer_offsets(supplied, self.tmp.name)
+        transaction.assert_not_called()
+        self.assert_zero_writes()
+
     def test_matching_live_profiles_can_proceed(self):
         for key in ((0x620105, 1828, 8), (0x620205, 2452, 16)):
             profile = PROFILES[key]
@@ -201,26 +211,18 @@ class TestCurveOptimizerLiveProfileGate(unittest.TestCase):
     def test_mismatched_profile_performs_zero_writes(self):
         supplied = PROFILES[(0x620105, 1828, 8)]
         live = PROFILES[(0x620205, 2452, 16)]
-        with mock.patch.object(safety, "get_hardware_profile",
-                               return_value=(live, "matched")):
-            with self.assertRaisesRegex(RuntimeError, "profile mismatch"):
-                read_curve_optimizer_offsets(supplied, self.tmp.name)
-        self.assert_zero_writes()
+        self.assert_refused_without_writes(
+            supplied, (live, "matched"), "profile mismatch")
 
     def test_unsupported_hardware_performs_zero_writes(self):
         supplied = PROFILES[(0x620105, 1828, 8)]
-        with mock.patch.object(safety, "get_hardware_profile",
-                               return_value=(None, "unsupported test hardware")):
-            with self.assertRaisesRegex(RuntimeError, "unsupported test hardware"):
-                read_curve_optimizer_offsets(supplied, self.tmp.name)
-        self.assert_zero_writes()
+        self.assert_refused_without_writes(
+            supplied, (None, "unsupported test hardware"),
+            "unsupported test hardware")
 
     def test_vermeer_performs_zero_writes(self):
-        with mock.patch.object(safety, "get_hardware_profile",
-                               return_value=(VERMEER, "matched")):
-            with self.assertRaisesRegex(RuntimeError, "not validated"):
-                read_curve_optimizer_offsets(VERMEER, self.tmp.name)
-        self.assert_zero_writes()
+        self.assert_refused_without_writes(
+            VERMEER, (VERMEER, "matched"), "not validated")
 
 
 class TestVermeerSlots(unittest.TestCase):
