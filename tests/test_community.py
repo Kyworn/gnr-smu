@@ -52,6 +52,18 @@ def make_bundle(tmp, name, mutate=None, model="AMD Ryzen 5 5600X 6-Core Processo
     return d
 
 
+def make_raw_bundle(tmp, name, raw):
+    d = os.path.join(tmp, name)
+    os.makedirs(d)
+    with open(os.path.join(d, "snap.bin"), "wb") as f:
+        f.write(raw)
+    meta = {"pm_table_version": "0x1", "pm_table_size": len(raw),
+            "physical_cores": 1, "snapshots": ["snap.bin"]}
+    with open(os.path.join(d, "meta.json"), "w") as f:
+        json.dump(meta, f)
+    return d
+
+
 def contiguous_layout(row):
     for base in (172, 180, 188, 212, 220, 228, 236, 244):
         block = [row[base + s] for s in range(8)]
@@ -131,6 +143,100 @@ class TestCompareTables(unittest.TestCase):
             f.write(b"\x00" * 16)
         with self.assertRaises(ValueError):
             compare_tables.load_bundle(d)
+
+    def test_absolute_snapshot_path_rejected(self):
+        outside = os.path.join(self.tmp.name, "outside.bin")
+        with open(outside, "wb") as f:
+            f.write(b"\0" * 4)
+        d = os.path.join(self.tmp.name, "absolute")
+        os.makedirs(d)
+        with open(os.path.join(d, "meta.json"), "w") as f:
+            json.dump({"pm_table_version": "0x1", "pm_table_size": 4,
+                       "physical_cores": 1, "snapshots": [outside]}, f)
+        with self.assertRaisesRegex(ValueError, "absolute snapshot path"):
+            compare_tables.load_bundle(d)
+
+    def test_parent_snapshot_path_rejected(self):
+        outside = os.path.join(self.tmp.name, "outside.bin")
+        with open(outside, "wb") as f:
+            f.write(b"\0" * 4)
+        d = os.path.join(self.tmp.name, "parent")
+        os.makedirs(d)
+        with open(os.path.join(d, "meta.json"), "w") as f:
+            json.dump({"pm_table_version": "0x1", "pm_table_size": 4,
+                       "physical_cores": 1,
+                       "snapshots": ["../outside.bin"]}, f)
+        with self.assertRaisesRegex(ValueError, "path escape"):
+            compare_tables.load_bundle(d)
+
+    def test_symlink_snapshot_escape_rejected(self):
+        outside = os.path.join(self.tmp.name, "outside.bin")
+        with open(outside, "wb") as f:
+            f.write(b"\0" * 4)
+        d = os.path.join(self.tmp.name, "symlink")
+        os.makedirs(d)
+        os.symlink(outside, os.path.join(d, "snap.bin"))
+        with open(os.path.join(d, "meta.json"), "w") as f:
+            json.dump({"pm_table_version": "0x1", "pm_table_size": 4,
+                       "physical_cores": 1,
+                       "snapshots": ["snap.bin"]}, f)
+        with self.assertRaisesRegex(ValueError, "leaves bundle"):
+            compare_tables.load_bundle(d)
+
+    def test_empty_snapshots_rejected(self):
+        d = os.path.join(self.tmp.name, "empty")
+        os.makedirs(d)
+        with open(os.path.join(d, "meta.json"), "w") as f:
+            json.dump({"pm_table_version": "0x1", "pm_table_size": 4,
+                       "physical_cores": 1, "snapshots": []}, f)
+        with self.assertRaisesRegex(ValueError, "at least one snapshot"):
+            compare_tables.load_bundle(d)
+
+    def test_malformed_metadata_rejected(self):
+        malformed = [
+            [],
+            {"pm_table_version": "0x1", "pm_table_size": "4",
+             "physical_cores": 1, "snapshots": ["snap.bin"]},
+            {"pm_table_version": "not-hex", "pm_table_size": 4,
+             "physical_cores": 1, "snapshots": ["snap.bin"]},
+        ]
+        for i, meta in enumerate(malformed):
+            with self.subTest(meta=meta):
+                d = os.path.join(self.tmp.name, f"malformed{i}")
+                os.makedirs(d)
+                with open(os.path.join(d, "meta.json"), "w") as f:
+                    json.dump(meta, f)
+                with self.assertRaises(ValueError):
+                    compare_tables.load_bundle(d)
+
+    def test_signed_zero_is_not_bit_identical(self):
+        a = make_raw_bundle(self.tmp.name, "positive_zero",
+                            struct.pack("<I", 0x00000000))
+        b = make_raw_bundle(self.tmp.name, "negative_zero",
+                            struct.pack("<I", 0x80000000))
+        snapshots = [next(iter(compare_tables.load_bundle(path)[1].values()))
+                     for path in (a, b)]
+        self.assertEqual(compare_tables.bit_identical_indices(snapshots),
+                         ([], [0]))
+
+    def test_identical_nan_bits_are_bit_identical(self):
+        raw = struct.pack("<I", 0x7FC00001)
+        a = make_raw_bundle(self.tmp.name, "nan_a", raw)
+        b = make_raw_bundle(self.tmp.name, "nan_b", raw)
+        snapshots = [next(iter(compare_tables.load_bundle(path)[1].values()))
+                     for path in (a, b)]
+        self.assertEqual(compare_tables.bit_identical_indices(snapshots),
+                         ([0], []))
+
+    def test_different_nan_bits_are_not_bit_identical(self):
+        a = make_raw_bundle(self.tmp.name, "nan_payload_a",
+                            struct.pack("<I", 0x7FC00001))
+        b = make_raw_bundle(self.tmp.name, "nan_payload_b",
+                            struct.pack("<I", 0x7FC00002))
+        snapshots = [next(iter(compare_tables.load_bundle(path)[1].values()))
+                     for path in (a, b)]
+        self.assertEqual(compare_tables.bit_identical_indices(snapshots),
+                         ([], [0]))
 
 
 class TestSubmitDump(unittest.TestCase):

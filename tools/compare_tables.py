@@ -27,6 +27,7 @@ effective frequency).
 """
 import json
 import os
+from pathlib import Path
 import struct
 import sys
 
@@ -36,17 +37,89 @@ from gnr_smu.hardware import detect_active_slots  # noqa: E402
 from gnr_smu.profiles import PROFILES  # noqa: E402
 
 
+class _Snapshot(tuple):
+    """Float values plus their original bytes for exact bit comparisons."""
+
+    def __new__(cls, values, raw):
+        snapshot = super().__new__(cls, values)
+        snapshot.raw = raw
+        return snapshot
+
+
+def _validate_metadata(meta, path):
+    if not isinstance(meta, dict):
+        raise ValueError(f"{path}/meta.json: expected a JSON object")
+    required = {
+        "pm_table_version": str,
+        "pm_table_size": int,
+        "physical_cores": int,
+        "snapshots": list,
+    }
+    for name, expected_type in required.items():
+        if name not in meta or type(meta[name]) is not expected_type:
+            raise ValueError(
+                f"{path}/meta.json: {name!r} must be {expected_type.__name__}")
+
+    try:
+        int(meta["pm_table_version"], 16)
+    except ValueError as e:
+        raise ValueError(
+            f"{path}/meta.json: invalid pm_table_version") from e
+    size = meta["pm_table_size"]
+    if size <= 0 or size % 4:
+        raise ValueError(
+            f"{path}/meta.json: pm_table_size must be a positive multiple of 4")
+    if meta["physical_cores"] <= 0:
+        raise ValueError(f"{path}/meta.json: physical_cores must be positive")
+
+    snapshots = meta["snapshots"]
+    if not snapshots:
+        raise ValueError(f"{path}/meta.json: at least one snapshot is required")
+    if any(not isinstance(name, str) or not name for name in snapshots):
+        raise ValueError(f"{path}/meta.json: snapshot names must be non-empty strings")
+    if len(set(snapshots)) != len(snapshots):
+        raise ValueError(f"{path}/meta.json: snapshot names must be unique")
+
+    if "pm_floats" in meta and (
+            type(meta["pm_floats"]) is not int or meta["pm_floats"] != size // 4):
+        raise ValueError(f"{path}/meta.json: pm_floats does not match pm_table_size")
+    if "threads" in meta and (
+            type(meta["threads"]) is not int or meta["threads"] <= 0):
+        raise ValueError(f"{path}/meta.json: threads must be a positive integer")
+    if "cpu_model" in meta and not isinstance(meta["cpu_model"], str):
+        raise ValueError(f"{path}/meta.json: cpu_model must be a string")
+
+
 def load_bundle(path):
-    with open(os.path.join(path, "meta.json")) as f:
+    root = Path(path).resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError(f"{path}: bundle path is not a directory")
+    with open(root / "meta.json") as f:
         meta = json.load(f)
+    _validate_metadata(meta, path)
     snaps = {}
-    for name in meta.get("snapshots", []):
-        with open(os.path.join(path, name), "rb") as f:
+    for name in meta["snapshots"]:
+        relative = Path(name)
+        if relative.is_absolute():
+            raise ValueError(f"{path}/meta.json: absolute snapshot path refused: {name}")
+        if ".." in relative.parts:
+            raise ValueError(f"{path}/meta.json: snapshot path escape refused: {name}")
+        try:
+            snapshot_path = (root / relative).resolve(strict=True)
+        except OSError as e:
+            raise ValueError(f"{path}/{name}: cannot resolve snapshot") from e
+        try:
+            snapshot_path.relative_to(root)
+        except ValueError as e:
+            raise ValueError(f"{path}/meta.json: snapshot leaves bundle: {name}") from e
+        if not snapshot_path.is_file():
+            raise ValueError(f"{path}/{name}: snapshot is not a regular file")
+        with open(snapshot_path, "rb") as f:
             data = f.read()
         if len(data) != meta["pm_table_size"]:
             raise ValueError(f"{path}/{name}: size mismatch")
         n = meta["pm_table_size"] // 4
-        snaps[name] = struct.unpack(f"<{n}f", data)
+        snaps[name] = _Snapshot(struct.unpack(f"<{n}f", data), data)
     return meta, snaps
 
 
@@ -64,6 +137,23 @@ def detect_bundle_layout(snaps, bases, width=8):
     for values in snaps.values():
         active |= set(detect_active_slots(values, bases, width))
     return tuple(sorted(active))
+
+
+def bit_identical_indices(snapshots):
+    """Return indices with equal/different raw float32 encodings."""
+    snapshots = list(snapshots)
+    if not snapshots:
+        raise ValueError("at least one snapshot is required")
+    n = len(snapshots[0])
+    if any(len(snapshot) != n or len(snapshot.raw) != n * 4
+           for snapshot in snapshots):
+        raise ValueError("snapshot sizes do not match")
+    identical, varying = [], []
+    for i in range(n):
+        bits = [snapshot.raw[i * 4:(i + 1) * 4] for snapshot in snapshots]
+        (identical if all(value == bits[0] for value in bits)
+         else varying).append(i)
+    return identical, varying
 
 
 def main():
@@ -122,11 +212,7 @@ def main():
     print("\n== cross-bundle index comparison ==")
     all_snaps = [(path, name, vals)
                  for path, _, snaps in loaded for name, vals in snaps.items()]
-    n = len(all_snaps[0][2])
-    identical, varying = [], []
-    for i in range(n):
-        vals = [v[i] for _, _, v in all_snaps]
-        (identical if all(v == vals[0] for v in vals) else varying).append(i)
+    identical, varying = bit_identical_indices(v for _, _, v in all_snaps)
     print(f"bit-identical across all {len(all_snaps)} snapshots: {len(identical)}")
     print(f"  {identical}")
     print(f"differing: {len(varying)}")
