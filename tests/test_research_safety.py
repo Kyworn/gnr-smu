@@ -70,6 +70,15 @@ def make_hwmon(root, number, name, labels):
 
 class TestResearchImportSafety(unittest.TestCase):
     def test_imports_do_not_execute_experiments(self):
+        real_open = open
+
+        def guarded_open(path, *args, **kwargs):
+            name = os.fspath(path)
+            forbidden = ("pm_table", "smu_args", "smu_cmd", "/smn")
+            if any(part in name for part in forbidden):
+                raise AssertionError(f"hardware access at import: {name}")
+            return real_open(path, *args, **kwargs)
+
         for relative_path in RESEARCH_MODULES:
             with self.subTest(module=relative_path):
                 output = io.StringIO()
@@ -79,6 +88,16 @@ class TestResearchImportSafety(unittest.TestCase):
                      mock.patch.object(
                          time, "sleep",
                          side_effect=AssertionError("measurement slept at import")), \
+                     mock.patch.object(
+                         subprocess, "run",
+                         side_effect=AssertionError("subprocess run at import")), \
+                     mock.patch.object(
+                         subprocess, "check_output",
+                         side_effect=AssertionError("subprocess at import")), \
+                     mock.patch.object(
+                         os, "write",
+                         side_effect=AssertionError("transaction at import")), \
+                     mock.patch("builtins.open", side_effect=guarded_open), \
                      contextlib.redirect_stdout(output), \
                      contextlib.redirect_stderr(output):
                     load_module(relative_path)
@@ -160,6 +179,13 @@ class TestSysfsDiscovery(unittest.TestCase):
     def test_missing_device_fails_closed(self):
         make_hwmon(self.root, 3, "acpitz", {})
         with self.assertRaisesRegex(RuntimeError, "found 0"):
+            hwmon_inputs("k10temp", {"tctl": ("temp", "Tctl")},
+                         root=self.root)
+
+    def test_missing_required_label_fails_closed(self):
+        make_hwmon(self.root, 4, "k10temp",
+                   {"temp3": ("Tccd1", 41000)})
+        with self.assertRaisesRegex(RuntimeError, "labelled 'Tctl'.*found 0"):
             hwmon_inputs("k10temp", {"tctl": ("temp", "Tctl")},
                          root=self.root)
 
@@ -269,6 +295,41 @@ class TestDangerousProbeSafety(unittest.TestCase):
         blocked.assert_called_once_with(P9800.ppt_msg, "mp1")
         payload.assert_called_once_with(P9800, P9800.ppt_msg, value)
         transaction.assert_called_once_with(P9800.ppt_msg, value)
+
+
+class TestDangerousRawToolSafety(unittest.TestCase):
+    def test_smu_send_rejects_non_allowlisted_message_before_smn(self):
+        module = load_module("research/dangerous/smu_send.py")
+        with mock.patch.object(module, "get_hardware_profile",
+                               return_value=(P9800, "9800X3D")), \
+             mock.patch.object(module, "smu_writes_supported",
+                               return_value=(True, "safe")), \
+             mock.patch.object(module, "smn_write") as write:
+            with self.assertRaises(SystemExit):
+                module.smu_send(0x01, 1)
+        write.assert_not_called()
+
+    def test_smu_send_rejects_power_payload_before_smn(self):
+        module = load_module("research/dangerous/smu_send.py")
+        with mock.patch.object(module, "get_hardware_profile",
+                               return_value=(P9800, "9800X3D")), \
+             mock.patch.object(module, "smu_writes_supported",
+                               return_value=(True, "safe")), \
+             mock.patch.object(module, "smn_write") as write:
+            with self.assertRaises(SystemExit):
+                module.smu_send(P9800.ppt_msg, 0)
+        write.assert_not_called()
+
+    def test_smu_advanced_rejects_non_allowlisted_mp1_before_smn(self):
+        module = load_module("research/dangerous/smu_advanced.py")
+        with mock.patch.object(module, "get_hardware_profile",
+                               return_value=(P9800, "9800X3D")), \
+             mock.patch.object(module, "smu_writes_supported",
+                               return_value=(True, "safe")), \
+             mock.patch.object(module, "smn_write") as write:
+            with self.assertRaises(SystemExit):
+                module.smu_send("mp1", 0x01, 1)
+        write.assert_not_called()
 
 
 class TestWorkloadCleanup(unittest.TestCase):
