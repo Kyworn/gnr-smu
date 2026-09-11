@@ -199,6 +199,27 @@ very different weight, and the confidence column says which is which:
   were disproved; the rows now say what they are *not*. See
   [the honesty audit](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#honesty-audit-2026-07-30).
 
+### 9800X3D named-telemetry corrections
+
+The normal GUI and named CSV schema expose only CONFIRMED/HIGH identities. The
+historical map still records MED/LOW hypotheses and negative results for research,
+but those rows are not established runtime telemetry.
+
+The evidence-alignment pass removed `pkg_energy` (`d[212]`), `slow_temp_0`/`1`
+(`d[298]`/`d[299]`), `soc_telemetry`/`soc_telemetry_metric` (`d[87]`/`d[95]`),
+`vddio_power`/`vdd18_power` (`d[22]`/`d[23]`), and the unsupported
+`vddg_iod`/`vddg_ccd` identities (`d[259]`/`d[261]`) from the 9800X3D profile.
+`cpu_power` and `socket_power` were also removed as aliases of `d[20]`; the
+confirmed package-power identity remains available as `pkg_power`.
+
+Established identities that previously had misleading names are now
+`vcore_telemetry_peak` (`d[18]`, CONFIRMED), `vcore_telemetry_average` (`d[19]`,
+CONFIRMED), `vddio_mem_voltage` (`d[58]`, HIGH), and `vddcr_cpu_vid` (`d[269]`,
+HIGH). The first two are distinct from the exporter’s `vcore_peak`/`vcore_avg`,
+which are calculated from the confirmed per-core voltage block. This changes the
+9800X3D named CSV schema from 87 to 86 columns; the 9950X3D and Vermeer schemas are
+unchanged.
+
 Open questions are tracked in [docs/TOFIX.md](docs/TOFIX.md); the EDC search is written
 up as
 [a negative result](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#edc_value--closed-negative-result-2026-07-30).
