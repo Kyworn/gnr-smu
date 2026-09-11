@@ -11,6 +11,7 @@ Run: python3 tools/validate_core_temps.py
 import argparse
 import glob
 import os
+from pathlib import Path
 import statistics
 import struct
 import subprocess

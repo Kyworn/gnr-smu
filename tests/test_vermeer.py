@@ -11,6 +11,7 @@ import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
@@ -139,6 +140,22 @@ class TestVermeerDetection(unittest.TestCase):
         self.assertEqual(VERMEER.confidence("socket_power"), "confirmed")
         self.assertIsNone(VERMEER.confidence("tctl"))
         self.assertIsNone(VERMEER.confidence("vid"))
+
+
+class TestCoreTemperatureValidator(unittest.TestCase):
+    def test_physical_core_discovery_uses_pathlib(self):
+        from validate_core_temps import physical_core_cpus
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cpu = os.path.join(tmp, "cpu7")
+            topology = os.path.join(cpu, "topology")
+            os.makedirs(topology)
+            with open(os.path.join(topology, "physical_package_id"), "w") as f:
+                f.write("0\n")
+            with open(os.path.join(topology, "core_id"), "w") as f:
+                f.write("3\n")
+            with mock.patch("validate_core_temps.glob.glob", return_value=[cpu]):
+                self.assertEqual(physical_core_cpus(), [7])
 
 
 class TestVermeerSlots(unittest.TestCase):
