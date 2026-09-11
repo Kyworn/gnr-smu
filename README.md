@@ -80,39 +80,16 @@ The `ryzen_smu` driver exposes a model-specific PM table at
 1828 bytes / 457 float32 values; the 9950X3D table is 2452 bytes / 613 values. This
 repo contains the measured layouts and tools that select the correct profile.
 
-## Major community additions
+## Current interfaces
 
-- **Ryzen 9 9950X3D support.** Thomas Pöchtrager's contribution adds a full second
-  hardware profile alongside the original Ryzen 7 9800X3D support — PM table
-  `0x620205`, all 16 per-core temperatures, and a model-specific SMU command
-  allowlist; see [`docs/architectures/granite_ridge/9950X3D.md`](docs/architectures/granite_ridge/9950X3D.md).
-- **Unified HWiNFO-style dashboard.** The GUI ([`tools/gui/gnr_master.py`](tools/gui/gnr_master.py))
-  is a single sensor tree with current/min/max/average columns, replacing the older
-  page-per-category layout. A live status bar shows CPU/CCD temperatures, peak core
-  frequency, and PPT/TDC/EDC in one line.
-- **Live CPU EDC value.** `d[64]` was identified as the EDC current candidate
-  (idle ~7 A, tracks above TDC current under load) and is shown next to the confirmed
-  EDC limit; see `research/granite_ridge/edc/recheck_edc.py`.
-- **Actually verified the 9950X3D's "L3" candidates instead of trusting table
-  position.** They were never confirmed to begin with — just assumed from where
-  they sat in the table. Live per-CCD load tests (`research/granite_ridge/l3/recheck_l3.py`,
-  `research/granite_ridge/l3/l3_specificity.py`, `research/granite_ridge/l3/l3_specificity_controlled.py`) checked
-  which fields actually respond to their own CCD and to L3-cache traffic
-  specifically:
-  - `d[595]`/`d[596]` (now `ccd_l3_temperature`, renamed from the unjustified
-    "diode temperature" guess) are CCD-selective and, in a core-temperature-matched
-    test, heat up more under L3 cache-thrash load than under an equally-hot ALU-only
-    load — real evidence of L3 coupling.
-  - `d[611]`/`d[612]` and the candidate CCD power/VDDM fields (`d[589]-d[592]`) were
-    found to be **not** CCD-selective under the same test and have been removed from
-    the GUI rather than kept mislabelled.
-- **9800X3D L3 temperature identified.** A 64 MiB shared working set isolated
-  `d[448]` from ordinary core heating: it rose +6.97 K under L3 traffic versus
-  +1.05 K under an ALU-only control at nearly the same final core and Tccd1
-  temperatures. The dashboard now exposes it as `CCD1 L3 Cache`.
-- **GUI usability fixes:** larger/consistently-styled refresh-rate and reset-min/max
-  controls, a "Dashboard" page that matches its sidebar entry, and a frequency summary
-  that reports the highest core clock instead of an average across all cores.
+- `tools/gui/gnr_master.py` provides a sensor dashboard with current, minimum,
+  maximum and average values plus profile-gated controls.
+- `tools/gnr_master.py` provides the command-line control workflow.
+- `tools/export_telemetry.py` exports profile-specific named JSON or CSV; raw
+  JSON snapshots retain every anonymous float separately.
+- `tools/dump_table_full.py` prints the complete table and applies documentary
+  labels only when the exact 9800X3D layout is detected.
+- `tools/submit_dump.py` creates a read-only community comparison bundle.
 
 ## Wanted: Ryzen hardware dumps for validation
 
@@ -185,7 +162,7 @@ not missing.
 For the 9800X3D `0x620105` table, all 457 indices have a row in [9800X3D_PM_TABLE_0x620105.md](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md), but the rows carry
 very different weight, and the confidence column says which is which:
 
-- **Cross-validated (strongest).** 14 automated checks compare PM fields against
+- **Cross-validated (strongest).** Automated checks compare PM fields against
   independent sensors — `k10temp`, `amdgpu`, `cpufreq`, DDR5 nominal — or against
   stock spec. Tctl, per-core temperatures, per-core frequency, boost limit, Vcore,
   VDDCR_SoC, VDDIO_MEM, iGPU clock, C6 residency, and the PPT/TDC/EDC limits
@@ -199,30 +176,21 @@ very different weight, and the confidence column says which is which:
   were disproved; the rows now say what they are *not*. See
   [the honesty audit](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#honesty-audit-2026-07-30).
 
-### 9800X3D named-telemetry corrections
+### 9800X3D named telemetry
 
 The normal GUI and named CSV schema expose only CONFIRMED/HIGH identities. The
-historical map still records MED/LOW hypotheses and negative results for research,
+evidence map also records MED/LOW hypotheses and negative results for research,
 but those rows are not established runtime telemetry.
 
-The evidence-alignment pass removed `pkg_energy` (`d[212]`), `slow_temp_0`/`1`
-(`d[298]`/`d[299]`), `soc_telemetry`/`soc_telemetry_metric` (`d[87]`/`d[95]`),
-`vddio_power`/`vdd18_power` (`d[22]`/`d[23]`), and the unsupported
-`vddg_iod`/`vddg_ccd` identities (`d[259]`/`d[261]`) from the 9800X3D profile.
-`cpu_power` and `socket_power` were also removed as aliases of `d[20]`; the
-confirmed package-power identity remains available as `pkg_power`.
+The named schema contains 86 columns. Established global identities include
+`pkg_power`, `vcore_telemetry_peak`, `vcore_telemetry_average`,
+`vddio_mem_voltage`, and `vddcr_cpu_vid`; the calculated `vcore_peak` and
+`vcore_avg` columns come from the confirmed per-core voltage block. Raw JSON
+snapshots retain all 457 floats without attaching names to unknown values.
 
-Established identities that previously had misleading names are now
-`vcore_telemetry_peak` (`d[18]`, CONFIRMED), `vcore_telemetry_average` (`d[19]`,
-CONFIRMED), `vddio_mem_voltage` (`d[58]`, HIGH), and `vddcr_cpu_vid` (`d[269]`,
-HIGH). The first two are distinct from the exporter’s `vcore_peak`/`vcore_avg`,
-which are calculated from the confirmed per-core voltage block. This changes the
-9800X3D named CSV schema from 87 to 86 columns; the 9950X3D and Vermeer schemas are
-unchanged.
-
-Open questions are tracked in [docs/TOFIX.md](docs/TOFIX.md); the EDC search is written
+Open questions are tracked in [docs/RESEARCH_BACKLOG.md](docs/RESEARCH_BACKLOG.md); the EDC search is written
 up as
-[a negative result](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#edc_value--closed-negative-result-2026-07-30).
+[a negative result](docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md#edcvalue-closed-negative-result-2026-07-30).
 
 ## Verifying the map
 
@@ -304,11 +272,10 @@ python3 -m unittest discover -s tests
 python3 tools/hwgate.py                 # hardware-gate self-test (refuses on unvalidated HW)
 ```
 
-The suite (50 tests) covers the Granite Ridge map regression, the Vermeer
-profile, real Vermeer PM-table fixtures, the SMU write blockade and the
-community dump tooling, so slot mapping, residency semantics, fail-closed
-behavior and cross-machine comparison are checked without needing the
-hardware present.
+The suite covers the Granite Ridge map regression, profile schemas, research
+execution guards, real Vermeer PM-table fixtures, the SMU write blockade,
+documentation integrity and community dump tooling without requiring the
+validated hardware to be present.
 
 ## Requirements
 

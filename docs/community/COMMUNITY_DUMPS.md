@@ -34,9 +34,11 @@ Attach the resulting directory to a GitHub issue with the exact CPU model.
   exact-size float32 arrays, nothing else
 
 Deliberately excluded: hostnames, dmesg (which can carry USB/GPU serial
-numbers), MAC/IP addresses, and every `/sys/kernel/ryzen_smu_drv` interface
-except the read-only telemetry files above. The snapshots themselves are
-pure sensor readings; all 372 floats of a healthy read are finite values.
+numbers), MAC/IP addresses, usernames/home paths, and every
+`/sys/kernel/ryzen_smu_drv` interface except the read-only telemetry files
+above. Snapshot files contain only the raw PM-table bytes returned by the
+driver. They are not sanitized or semantically labelled; contributors should
+still review the bundle before publishing it.
 
 ## Comparing dumps (maintainers)
 
@@ -47,6 +49,14 @@ python3 tools/compare_tables.py --block 172 --block 180 --block 212 bundleA bund
 
 Comparison is only meaningful within one `(pm_version, size)`; mixed tables
 are reported per bundle but never compared index-wise.
+
+Bundles are untrusted input. The comparison tool requires `meta.json` to be a
+JSON object with a hexadecimal PM-table version, a positive float32-aligned
+size, a positive physical-core count, and at least one unique non-empty
+snapshot path. Absolute paths, `..` components, symlinks escaping the bundle,
+missing files, and size mismatches are rejected before snapshot loading. These
+checks protect the maintainer's filesystem; they do not authenticate the
+submitter or prove that the metadata describes the attached hardware.
 
 Per bundle the tool reports:
 
@@ -67,7 +77,9 @@ Per bundle the tool reports:
 
 Across same-table bundles it reports bit-identical indices (layout-common
 candidates such as clocks, rails and limits) versus differing indices
-(machine- or load-specific), with the widest spreads listed first.
+(machine- or load-specific), with the widest spreads listed first. Identity is
+tested on each original four-byte float32 lane, so signed zero and distinct NaN
+payloads are not collapsed by Python float comparison.
 
 ### Reading a comparison
 

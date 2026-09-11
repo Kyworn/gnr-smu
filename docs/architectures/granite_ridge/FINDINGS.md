@@ -1,4 +1,4 @@
-# Reverse Engineering SMU Granite Ridge — Findings
+# Ryzen 7 9800X3D Granite Ridge — SMU findings
 
 **Platform:** AMD Ryzen 7 9800X3D (Zen 5, family 0x1A model 0x44)  
 **Kernel:** 6.19.11-1-cachyos | **SMU version:** 98.75.0
@@ -16,7 +16,7 @@
 
 ## 2. Telemetry Access (`ryzen_smu`)
 
-We migrated completely to the official [ryzen_smu](https://github.com/amkillam/ryzen_smu) kernel driver, deprecating our temporary custom module.
+The project migrated completely to the maintained [ryzen_smu](https://github.com/amkillam/ryzen_smu) kernel driver, replacing its temporary custom module.
 - Hardware boundaries are applied by pushing unsigned 32-bit payloads to `/sys/kernel/ryzen_smu_drv/smu_args` followed by the MSG ID to `mp1_smu_cmd`.
 - Telemetry table is polled natively from `/sys/kernel/ryzen_smu_drv/pm_table`.
 
@@ -65,7 +65,7 @@ table are in [9800X3D_PM_TABLE_0x620105.md](9800X3D_PM_TABLE_0x620105.md#re-veri
 - **0x3D:** Set EDC Limit (mA)
 
 **⚠ Corrected 2026-08-26 — these two were the wrong way round here.** The claim rested
-on a "validated via fuzzing" line in TOFIX.md that named no script and recorded no
+on a historical "validated via fuzzing" TODO that named no script and recorded no
 number, and on a table in 9800X3D_BASELINE_0x620105.md whose only evidence was `RSP=0x01` — the
 SMU accepting a message, which says nothing about which limit it moved. Both limits are
 readable in the PM table, so it is directly observable. `research/dangerous/probe_tdc_edc.py`
@@ -108,7 +108,7 @@ Both MP1 and RSMU endpoints were probed via `stress-ng` differential + direct wr
 | **RSMU** (`rsmu_smu_cmd`) | 0x58–0x6F | `Permission denied` — driver guardrails block all IDs in this range |
 
 These 24 MSG IDs are either unmapped, firmware-reserved, or behind a privilege wall not exposed
-by `ryzen_smu`. The CO range ends at 0x57 (C7). Nothing useful lives above it on this platform.
+by `ryzen_smu`. The CO range ends at 0x57 (C7); no safe or usable path in this range has been established on this platform.
 
 **HSMP** (`hsmp_smu_cmd`) was also tested — all commands return errors. Root cause: HSMP requires
 BIOS activation (`Advanced > AMD CBS > NBIO > SMU Common Options > HSMP Support`), which is
