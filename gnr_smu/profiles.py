@@ -379,13 +379,11 @@ PROFILES = {
         # The MP1 *write* path (0x50 + slot, same as the 9800X3D per FINDINGS.md)
         # does NOT work here: research/dangerous/probe_co_9600x.py wrote core 4's
         # margin one step off baseline, got RSP=1 (SMU claims accepted), and the
-        # PSM margin read back unchanged. Reproduced twice, including after
-        # switching BIOS PBO/Curve Optimizer mode from Auto to Manual — that was
-        # the leading hypothesis and it did not change the result, so the cause
-        # is still open (possibly Secure Boot/kernel lockdown restricting this
-        # specific MP1 message class, a firmware limitation on this SKU, or
-        # something else not yet tested). Accepted-but-ignored is worse than
-        # refused, so co_mode stays "unsupported" — this blocks the MP1 write IDs
+        # PSM margin read back unchanged. Reproduced with BIOS PBO/Curve
+        # Optimizer switched from Auto to Manual AND Secure Boot disabled
+        # (tested together) — both leading hypotheses ruled out, same result.
+        # Root cause still open. Accepted-but-ignored is worse than refused, so
+        # co_mode stays "unsupported" — this blocks the MP1 write IDs
         # (smu_message_supported()) while co_get_msg alone, independent of
         # co_mode, keeps the read path enabled.
         co_mode="unsupported",
