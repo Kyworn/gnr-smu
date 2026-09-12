@@ -1,0 +1,292 @@
+#!/usr/bin/env python3
+"""Which MP1 message is TDC and which is EDC on the 9600X — by read-back, not by fuzzing.
+
+Adapted from research/dangerous/probe_tdc_edc.py, which settled this the same way for the
+9800X3D (2026-08-26 result: 0x3C is TDC, 0x3D is EDC — see FINDINGS.md#4a). Both
+other Granite Ridge profiles (9800X3D, 9950X3D) landed on that same mapping, but this
+repo's own philosophy is not to assume it carries to a third, differently-binned part
+without measuring — a shared family-level mailbox layout counts as one source, not a
+per-SKU confirmation.
+
+It is directly observable, same method as the original: zone 0x000 exposes both
+limits as floats in amps. Write a distinctive value on one message ID and read back
+which field moved.
+
+Two safety properties make this cheap to run:
+
+  - The probe value is below *both* currently active limits (checked against the live
+    table at startup, not a hardcoded stock figure), so it is a valid reduction under
+    either interpretation. The worst case is a mildly throttled CPU for the duration.
+  - SMU limits are volatile. A reboot restores the BIOS values no matter what happens.
+
+Step 0 validates the read-back itself against PPT (0x3E), which nothing disputes. If
+d[2] does not follow a PPT write, then d[8]/d[63] would not follow either and the
+whole method is void — better to find that out before drawing a conclusion from it.
+
+The 9600X profile's write bounds are deliberately scoped to exactly this probe's
+values plus this machine's live baseline at the time the profile was written
+(gnr_smu/profiles.py) — nothing wider. This is not general SMU control; it only
+exists to gather the read-back evidence.
+
+    sudo python3 research/dangerous/probe_tdc_edc_9600x.py
+"""
+
+import math
+import struct
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT))
+from gnr_smu.hardware import get_hardware_profile  # noqa: E402
+from gnr_smu.profiles import PROFILES  # noqa: E402
+from gnr_smu.safety import (smu_command_allowed,
+                            smu_writes_supported)  # noqa: E402
+
+PM = "/sys/kernel/ryzen_smu_drv/pm_table"
+VERSION_PATH = "/sys/kernel/ryzen_smu_drv/pm_table_version"
+MP1 = "/sys/kernel/ryzen_smu_drv/mp1_smu_cmd"
+ARGS = "/sys/kernel/ryzen_smu_drv/smu_args"
+
+EXPECTED_PM_VERSION = 0x620105
+EXPECTED_PROFILE = PROFILES[(0x620105, 1828, 6)]
+
+MSG_PPT = 0x3E
+
+# Below both current limits, checked against the live values at startup rather than
+# against a stock figure this file would otherwise have to keep its own copy of.
+# Distinctive enough not to be confused with a stock or BIOS value. Must also stay
+# inside the 9600X profile's deliberately narrow write bounds (profiles.py).
+PROBE_A = 111
+PROBE_PPT_W = 151
+
+# What this probe does and does not establish. The PPT control proves the write path
+# and the read-back path work end to end; it does not independently confirm that d[8]
+# and d[63] are TDC and EDC — that identification comes from 9800X3D_PM_TABLE_0x620105.md, where it
+# rests on the values matching stock spec exactly. What the probe adds is which
+# message ID drives which of those two fields, and for that a single disjoint,
+# reproduced-on-demand result is enough. It is one trial per ID: rerun it rather than
+# cite it if the answer ever matters again.
+
+I_PPT, I_TDC, I_EDC = 2, 8, 63
+
+SETTLE = 0.5
+
+
+def read_limits():
+    with open(PM, "rb") as f:
+        d = struct.unpack("<457f", f.read(1828))
+    return d[I_PPT], d[I_TDC], d[I_EDC]
+
+
+def require_probe_profile():
+    """Authorize this exact experiment without touching a mailbox file."""
+    profile, why = get_hardware_profile()
+    if profile != EXPECTED_PROFILE:
+        raise RuntimeError(f"probe requires the live-detected AMD Ryzen 5 9600X profile: {why}")
+    ok, reason = smu_writes_supported()
+    if not ok:
+        raise RuntimeError(reason)
+    return profile
+
+
+def authorize_write(msg_id, arg0):
+    """Apply every centralized MP1 gate before the low-level transaction."""
+    profile = require_probe_profile()
+    ok, reason = smu_command_allowed(profile, "mp1", msg_id, arg0)
+    if not ok:
+        raise RuntimeError(reason)
+    return profile
+
+
+def _send_transaction(msg_id, arg0):
+    """Returns the SMU response byte. 1 is OK; anything else means the write did not
+    take, which is itself an answer worth printing rather than swallowing."""
+    with open(ARGS, "wb") as f:
+        f.write(struct.pack("<6I", arg0, 0, 0, 0, 0, 0))
+    with open(MP1, "wb") as f:
+        f.write(struct.pack("<I", msg_id))
+    time.sleep(SETTLE)
+    with open(MP1, "rb") as f:
+        return struct.unpack("<I", f.read(4))[0]
+
+
+def send(msg_id, arg0):
+    """Authorize and perform one probe or restore transaction."""
+    authorize_write(msg_id, arg0)
+    return _send_transaction(msg_id, arg0)
+
+
+def probe(msg_id, arg0, label, unit, baseline):
+    """Returns (after, field, exact).
+
+    `field` is the single limit this ID was shown to drive, or None. `exact` says
+    whether it also read back as the requested value. The two are deliberately
+    separate: a clamp or a quantisation can move exactly one field without it landing
+    on the number we asked for, which is still an identification — while a write that
+    the SMU refused, or one that moved two fields at once, is not.
+    """
+    rsp = send(msg_id, arg0)
+    after = read_limits()
+    moved = [name for name, b, a in zip(("PPT", "TDC", "EDC"), baseline, after)
+             if abs(a - b) > 0.5]
+    want = arg0 / 1000.0
+    landed = [name for name, a in zip(("PPT", "TDC", "EDC"), after)
+              if abs(a - want) < 0.5]
+    print(f"  0x{msg_id:02X} <- {label}: RSP={rsp} "
+          f"PPT {baseline[0]:.1f}->{after[0]:.1f} W  "
+          f"TDC {baseline[1]:.1f}->{after[1]:.1f} A  "
+          f"EDC {baseline[2]:.1f}->{after[2]:.1f} A")
+
+    if rsp != 1:
+        print(f"       SMU refused the write (RSP={rsp}); nothing to conclude from it.")
+        return after, None, False
+    if not moved:
+        print("       accepted but no limit moved — either the field is not one of "
+              "these three, or firmware clamped the value.")
+        return after, None, False
+    if len(moved) > 1:
+        print(f"       moved {len(moved)} fields at once ({', '.join(moved)}) — this ID "
+              "does not identify a single limit, or something else is writing.")
+        return after, None, False
+
+    field = moved[0]
+    exact = moved == landed
+    print(f"       moved: {field}" + ("" if exact else
+          f" (to {dict(zip(('PPT', 'TDC', 'EDC'), after))[field]:g}, not the {want:g} "
+          "asked for — clamped or quantised; the identification stands, the value "
+          "does not)"))
+    return after, field, exact
+
+
+def restore_one(msg_id, field, origin):
+    """Send msg_id back to the pre-run value of whichever limit it was shown to drive.
+
+    An unresolved field means we never learned what this ID does, so there is nothing
+    to put back through it — and guessing is how the crossed restore happened. Raises
+    nothing: the caller has more cleanup to attempt after this one.
+    """
+    idx = {"PPT": 0, "TDC": 1, "EDC": 2}
+    if field not in idx:
+        return
+    try:
+        # Milli-units of the value we found, not of a rounded copy of it: rounding to
+        # whole amps first silently discards a fractional BIOS limit.
+        send(msg_id, int(round(origin[idx[field]] * 1000)))
+    except OSError as e:
+        print(f"  restore of 0x{msg_id:02X} failed ({e}) — continuing with the rest")
+
+
+def main():
+    try:
+        profile = require_probe_profile()
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSED: {exc}") from exc
+    try:
+        with open(VERSION_PATH, "rb") as f:
+            ver = struct.unpack("<I", f.read(4))[0]
+    except OSError as e:
+        sys.exit(f"cannot read pm_table_version ({e}) — is ryzen_smu loaded?")
+    if ver != EXPECTED_PM_VERSION:
+        sys.exit(f"PM table {hex(ver)}: d[8]/d[63] are the Granite Ridge 0x620105 offsets, and this "
+                 f"probe writes SMU limits. Refusing.")
+
+    origin = read_limits()
+    base = origin
+    print(f"baseline: PPT {origin[0]:.1f} W  TDC {origin[1]:.1f} A  EDC {origin[2]:.1f} A")
+    # The probe is only a reduction if it is below what is *currently* set. On an Eco
+    # or PBO machine the active limits are not stock, and the hardcoded stock figures
+    # would make this an increase.
+    if PROBE_A >= min(origin[1], origin[2]) or PROBE_PPT_W >= origin[0]:
+        sys.exit(f"probe values ({PROBE_PPT_W} W / {PROBE_A} A) are not below the active "
+                 f"limits ({origin[0]:.0f} W / {origin[1]:.0f} A / {origin[2]:.0f} A). "
+                 "This probe only ever lowers a limit. Refusing.")
+
+    if not all(math.isfinite(v) for v in origin):
+        sys.exit(f"baseline reads back non-finite ({origin}) — the offsets or the "
+                 "driver are not giving usable floats. Refusing to write.")
+
+    # Refuse before the first transaction unless both probe values and every possible
+    # restoration value pass the centralized bounds for the live profile.
+    planned = [
+        (profile.ppt_msg, PROBE_PPT_W * 1000),
+        (profile.tdc_msg, PROBE_A * 1000),
+        (profile.edc_msg, PROBE_A * 1000),
+        (profile.ppt_msg, int(round(origin[0] * 1000))),
+        (profile.tdc_msg, int(round(origin[1] * 1000))),
+        (profile.edc_msg, int(round(origin[2] * 1000))),
+    ]
+    try:
+        for msg_id, arg0 in planned:
+            authorize_write(msg_id, arg0)
+    except RuntimeError as exc:
+        raise SystemExit(f"REFUSED before first write: {exc}") from exc
+
+    verdict = {}
+    # Every ID this run has written through, whether or not it was attributed. The
+    # cleanup needs this: probe() can raise after the write has already landed, and
+    # a write nobody recorded is a limit nobody restores.
+    touched = []
+    try:
+        print("\nstep 0 — does the read-back work at all? PPT is not in dispute.")
+        touched.append(MSG_PPT)
+        after, field, exact = probe(MSG_PPT, PROBE_PPT_W * 1000, f"{PROBE_PPT_W} W",
+                                    "W", base)
+        if field != "PPT" or not exact:
+            sys.exit("d[2] did not follow an uncontested PPT write. The read-back "
+                     "method is void here, so d[8]/d[63] would prove nothing either. "
+                     "Stopping.")
+        restore_one(MSG_PPT, "PPT", origin)
+        time.sleep(SETTLE)
+        base = read_limits()
+        print("  read-back confirmed; PPT restored.")
+
+        for msg_id in (0x3D, 0x3C):
+            print(f"\nstep — 0x{msg_id:02X}")
+            touched.append(msg_id)
+            after, field, exact = probe(msg_id, PROBE_A * 1000, f"{PROBE_A} A", "A",
+                                        base)
+            verdict[msg_id] = field
+            # Restore only the ID just tested, to the value its own field had before
+            # the run. An earlier version restored *both* IDs from this trial's
+            # result, which on the second trial wrote them crossed: 180 A into a
+            # 120 A TDC. Which field this ID drives is exactly what probe() returns.
+            restore_one(msg_id, field, origin)
+            time.sleep(SETTLE)
+            base = read_limits()
+    finally:
+        # Ctrl-C, a short read or any exception above must not leave a limit lowered.
+        # Each attempt is independent: one failure must not cancel the others.
+        print("\n--- restoring ---")
+        for msg_id in dict.fromkeys(touched):
+            restore_one(msg_id, "PPT" if msg_id == MSG_PPT else verdict.get(msg_id),
+                        origin)
+        time.sleep(SETTLE)
+        try:
+            final = read_limits()
+        except OSError as e:
+            final = None
+            print(f"  cannot read the limits back ({e}) — reboot to be sure.")
+        if final:
+            print(f"final: PPT {final[0]:.1f} W  TDC {final[1]:.1f} A  "
+                  f"EDC {final[2]:.1f} A")
+            off = [n for n, f, o in zip(("PPT", "TDC", "EDC"), final, origin)
+                   if abs(f - o) > 0.5]
+            if off:
+                # This is the honest case, not a formality: a write can land through
+                # an ID whose field was never identified, and then no amount of
+                # software knows which ID to send the old value back through.
+                print(f"  WARNING: {', '.join(off)} did not come back to the value "
+                      f"this run started from ({origin[0]:.1f} W / {origin[1]:.1f} A "
+                      f"/ {origin[2]:.1f} A). Reboot — the BIOS limits are restored "
+                      "on reset and nothing here can do better.")
+
+    print("\n--- verdict ---")
+    for msg_id, field in verdict.items():
+        print(f"  0x{msg_id:02X} = {field or 'unresolved'}")
+    print("A reboot restores the BIOS limits regardless of what this printed.")
+
+
+if __name__ == "__main__":
+    main()

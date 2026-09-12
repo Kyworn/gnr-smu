@@ -986,6 +986,12 @@ class GNRMaster(QMainWindow):
     def open_core_control(self):
         if not self._smu_controls_available():
             return
+        if self.profile.co_mode == "unsupported":
+            self.log_msg(
+                f"GUARDRAIL: Curve Optimizer writes are not validated on "
+                f"{self.profile.name}", "ERROR", ACCENT_RED,
+            )
+            return
         if not self.refresh_co_values():
             self.log_msg(
                 f"Curve Optimizer readback unavailable; refusing to prefill controls: "

@@ -326,6 +326,83 @@ PROFILES = {
         # real peak-current reading should (research/granite_ridge/edc/recheck_edc.py).
         edc_value=64,
     ),
+    # AMD Ryzen 5 9600X / Granite Ridge (Zen 5).  Shares PM table 0x620105 /
+    # 1828 bytes with the 9800X3D, but only has 6 physical cores. A dump
+    # (tests/fixtures/granite_ridge/9600x/, 2026-09-12) shows detect_active_slots() reading SMU slots
+    # (0,1,2,3,6,7) live and (4,5) fused off, identically at idle and under
+    # all-core load — hence core_slots below, verified against the live table
+    # at detection time the same way the 5600X's is (_fused_layout_matches).
+    #
+    # Telemetry-only for now: the per-core/global offsets are inherited from
+    # the 9800X3D map on the strength of the identical (version, size), which
+    # this project's own philosophy treats as one source, not independent
+    # confirmation — hence provisional_blocks/provisional_globals cover
+    # everything until cross-validated against k10temp/amdgpu/cpufreq on this
+    # machine specifically (see docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md).
+    # No SMU write is validated on this part: stock PPT/TDC/EDC and message
+    # IDs are intentionally left at 0 rather than assumed from the 9800X3D or
+    # a published spec sheet, so every write path stays blocked.
+    (0x620105, 1828, 6): HardwareProfile(
+        "AMD Ryzen 5 9600X", "AMD Ryzen 5 9600X", 0x620105, 1828, 6,
+        core_power=333, core_voltage=309, core_temp=317, core_frequency=325,
+        core_fit=None, core_activity=None, core_c0=341, core_cc1=349,
+        core_cc6=357, core_boost_limit=373, boost_limit_confident=False,
+        ccd_power_candidate=None, ccd_vddm_candidate=None,
+        # d[448] reads 49.7 C on the live machine, in the same range as
+        # k10temp Tccd1 (52.5 C) and the per-core temps — same offset the
+        # 9800X3D uses, inherited on the strength of the identical table
+        # version/size. Not independently re-run here (no cache-thrash-vs-ALU
+        # differential test on this chip yet), hence still provisional.
+        ccd_l3_temperature=448, ccd_candidate_count=1,
+        # 2026-09-12: enabled to run research/dangerous/probe_tdc_edc_9600x.py,
+        # which identifies which of 0x3C/0x3D drives TDC vs EDC on this part by
+        # write/readback (both other Granite Ridge parts landed on
+        # 0x3C=TDC/0x3D=EDC, but that is not assumed here). Message IDs are the
+        # ZenStates-Core Zen4/5 desktop mapping, shared with both other Granite
+        # Ridge profiles. Write bounds cover ONLY the probe's own values (151 W /
+        # 111 A) and this machine's live baseline at probe time (200 W / 130 A /
+        # 225 A) so the probe can restore what it found — not a general write
+        # range, and not this SKU's stock spec (unknown; this machine's BIOS is
+        # not necessarily at stock limits).
+        ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
+        stock_ppt=0, stock_tdc=0, stock_edc=0,
+        ppt_write_bounds=(151, 200),
+        tdc_write_bounds=(111, 130),
+        edc_write_bounds=(111, 225),
+        # Curve Optimizer: read AND write validated.
+        #
+        # RSMU 0xD5 (GetDldoPsmMargin) read-back was verified against known BIOS
+        # values across all six cores, through the slot-aware fix in safety.py
+        # (2026-09-12) that routes core->SMU-slot translation through
+        # profile.slot() before building the CCD/core mask —
+        # core_slots=(0,1,2,3,6,7) means Linux cores 4/5 are slots 6/7, and the
+        # unfixed code would have queried the two fused (inactive) slots instead.
+        #
+        # The write side took several passes to land on the right encoding.
+        # The legacy per-core mapping (0x50 + slot, same as the 9800X3D per
+        # FINDINGS.md) got RSP=1 (SMU claims accepted) but never actually moved
+        # the PSM margin — reproduced with BIOS PBO/Curve Optimizer on Manual,
+        # Secure Boot disabled, and kernel lockdown confirmed "none", ruling out
+        # every access-restriction hypothesis. The actual cause was a different
+        # mailbox format: this chip's SMU firmware (98.84.0) is newer than the
+        # 9800X3D's (98.75.0) that 0x50-0x57 was measured on, and like the
+        # 9950X3D (also newer firmware) it uses the packed 0x35 CCD/core-mask
+        # command instead. Confirmed by write/readback via
+        # research/dangerous/probe_co_9600x.py: writing slot 6 (Linux core 4)
+        # through 0x35 moved only that core's margin, landed exactly on the
+        # requested value, and restored cleanly.
+        co_mode="packed_core_mask",
+        co_msg=0x35,
+        co_get_msg=0xD5,
+        allow_smu_writes=True,
+        core_slots=(0, 1, 2, 3, 6, 7),
+        globals_map=_GNR_9800X3D_GLOBALS,
+        provisional_blocks=("core_power", "core_voltage", "core_temp",
+                            "core_frequency", "core_c0", "core_cc1",
+                            "core_cc6", "core_boost_limit",
+                            "ccd_l3_temperature"),
+        provisional_globals=tuple(k for k, _ in _GNR_9800X3D_GLOBALS),
+    ),
     # AMD Ryzen 5 5600X / Vermeer (Zen 3).  Read-only: no SMU command is
     # validated on this part, so every write path stays blocked (see
     # docs/architectures/vermeer/VERMEER_5600X.md for the evidence behind each mapped block).

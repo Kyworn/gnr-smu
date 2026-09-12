@@ -9,6 +9,7 @@ fixtures and fail-closed hardware profiles.
 Currently supported:
 - Ryzen 7 9800X3D / Granite Ridge — telemetry + validated SMU controls
 - Ryzen 9 9950X3D / Granite Ridge — telemetry + validated SMU controls
+- Ryzen 5 9600X / Granite Ridge — telemetry + validated SMU controls
 - Ryzen 5 5600X / Vermeer — read-only telemetry
 
 ### Mapping philosophy
@@ -49,6 +50,19 @@ missing telemetry.
 Telemetry and controls are supported on the Ryzen 7 9800X3D and Ryzen 9 9950X3D.
 The 9950X3D profile includes all 16 per-core temperatures and a model-specific SMU
 command allowlist; see [`docs/architectures/granite_ridge/9950X3D.md`](docs/architectures/granite_ridge/9950X3D.md).
+
+The Ryzen 5 9600X shares the 9800X3D's PM table (`0x620105`, 1828 bytes / 457
+floats) but has only 6 physical cores on a single CCD; a real hardware dump
+confirmed both the version/size match and the fused-core layout (SMU slots 4-5
+off) before any offset was reused, rather than assuming the table transfers.
+Power-limit and Curve Optimizer writes are both validated by write/readback —
+notably, Curve Optimizer uses the 9950X3D's packed `0x35` command, not the
+9800X3D's legacy `0x50-0x57`, because this part's SMU firmware is newer than
+the 9800X3D's; see
+[`docs/architectures/granite_ridge/9600X.md`](docs/architectures/granite_ridge/9600X.md)
+for the full write-up, including a latent core-index-vs-SMU-slot bug in the
+Curve Optimizer command builder that this profile's fused layout exposed and
+that is now fixed for every profile.
 
 Read-only telemetry is also supported on the Ryzen 5 5600X / Vermeer
 (PM table `0x380905`, 1488 bytes / 372 floats, SMU firmware tested: 56.70.0).
@@ -102,7 +116,7 @@ and generation-wide layouts. Priority hardware, wanted for research/validation
 ```text
 Zen 3 / Vermeer: 5700X, 5800X, 5900X, 5950X, other 5600X samples
 Zen 4 / Raphael: 7600X, 7700X, 7900X, 7950X
-Zen 5 / Granite Ridge: 9600X, 9700X, 9900X, 9950X, other PM-table variants
+Zen 5 / Granite Ridge: 9700X, 9900X, 9950X, other 9600X samples (fused-layout binning), other PM-table variants
 ```
 
 ```bash
@@ -238,19 +252,35 @@ sudo python3 tools/dump_table_full.py      # complete table; labels where mapped
 ```
 
 SMU control uses profile-specific MP1 mailbox **message IDs** (not table offsets).
-Power limits are the same on both Granite Ridge parts — `0x3E` PPT, `0x3C` TDC, `0x3D` EDC. This repo
+Power limits are the same across all three Granite Ridge parts — `0x3E` PPT, `0x3C` TDC, `0x3D` EDC. This repo
 asserted `0x3D` TDC / `0x3C` EDC until 2026-08-26, on the strength of a note that named
-no measurement; `research/dangerous/probe_tdc_edc.py` settles it by writing a value and reading
+no measurement; `research/dangerous/probe_tdc_edc.py` (and its 9600X counterpart,
+`research/dangerous/probe_tdc_edc_9600x.py`) settle it per part by writing a value and reading
 back which limit moved.
 
-Curve Optimizer differs: `0x50`-`0x57` per core on the 9800X3D, as a signed 32-bit
-value, against `0x35` on the 9950X3D with the CCD and core encoded into the argument.
-The active offset is read back on both parts with RSMU `0xD5`
-(`GetDldoPsmMargin`), using the CCD/core mask in argument 0. This was verified on a
-9800X3D with BIOS `-30`: every core returned `RSP=1` and `arg0=0xFFFFFFE2`. The GUI
-therefore shows live SMU values rather than a local cache and verifies every CO write
-by reading it back. Its sensor-table column order, column widths, refresh interval and
-window size remain stored in `$XDG_CONFIG_HOME/gnr_master.json`.
+Curve Optimizer does not follow the same split as power limits: it is not "9800X3D vs.
+everything else" but a firmware-generation split. `0x50`-`0x57` per core, as a signed
+32-bit value, works on the 9800X3D (SMU firmware 98.75.0); the packed `0x35` command,
+with the CCD and core encoded into the argument, works on both the 9950X3D and the
+9600X (SMU firmware 98.8x) — the 9600X's `0x50-0x57` write returns `RSP=1` ("accepted")
+but never actually moves the margin, confirmed by write/readback in
+`research/dangerous/probe_co_9600x.py` after ruling out BIOS PBO mode, Secure Boot and
+kernel lockdown as the cause. The active offset is read back on every part with RSMU
+`0xD5` (`GetDldoPsmMargin`), using the CCD/core mask in argument 0 — this readback is
+unaffected by which write format the part uses, since it goes through a fixed command
+regardless of `co_mode`. This was verified on a 9800X3D with BIOS `-30`: every core
+returned `RSP=1` and `arg0=0xFFFFFFE2`. The GUI therefore shows live SMU values rather
+than a local cache and verifies every CO write by reading it back. Its sensor-table
+column order, column widths, refresh interval and window size remain stored in
+`$XDG_CONFIG_HOME/gnr_master.json`.
+
+Every per-core mailbox address (message ID or RSMU core mask) is built from the SMU
+*slot* a Linux core lives on, not the Linux core index itself — the two diverge on any
+profile with fused cores (`core_slots` in `gnr_smu/profiles.py`, e.g. the 9600X or
+5600X). `curve_optimizer_command()`/`curve_optimizer_read_command()` in
+`gnr_smu/safety.py` did not do this translation until 2026-09-12; it was invisible on
+every profile with an identity core-slot mapping and would have silently addressed the
+wrong physical core on the 9600X.
 
 `research/` holds the measurement scripts, one per question asked, grouped by
 architecture (`granite_ridge/`, `vermeer/`) with superseded passes under
@@ -273,7 +303,7 @@ python3 tools/hwgate.py                 # hardware-gate self-test (refuses on un
 ```
 
 The suite covers the Granite Ridge map regression, profile schemas, research
-execution guards, real Vermeer PM-table fixtures, the SMU write blockade,
+execution guards, real Vermeer and 9600X PM-table fixtures, the SMU write blockade,
 documentation integrity and community dump tooling without requiring the
 validated hardware to be present.
 
