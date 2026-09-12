@@ -303,7 +303,7 @@ python3 tools/hwgate.py                 # hardware-gate self-test (refuses on un
 ```
 
 The suite covers the Granite Ridge map regression, profile schemas, research
-execution guards, real Vermeer PM-table fixtures, the SMU write blockade,
+execution guards, real Vermeer and 9600X PM-table fixtures, the SMU write blockade,
 documentation integrity and community dump tooling without requiring the
 validated hardware to be present.
 

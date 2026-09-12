@@ -328,7 +328,7 @@ PROFILES = {
     ),
     # AMD Ryzen 5 9600X / Granite Ridge (Zen 5).  Shares PM table 0x620105 /
     # 1828 bytes with the 9800X3D, but only has 6 physical cores. A dump
-    # (my_9600x/, 2026-09-12) shows detect_active_slots() reading SMU slots
+    # (tests/fixtures/granite_ridge/9600x/, 2026-09-12) shows detect_active_slots() reading SMU slots
     # (0,1,2,3,6,7) live and (4,5) fused off, identically at idle and under
     # all-core load — hence core_slots below, verified against the live table
     # at detection time the same way the 5600X's is (_fused_layout_matches).
