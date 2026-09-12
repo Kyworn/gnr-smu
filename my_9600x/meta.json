@@ -1,0 +1,33 @@
+{
+  "tool": "gnr-smu submit_dump.py",
+  "timestamp_utc": "20260912T195240Z",
+  "cpu_model": "AMD Ryzen 5 9600X 6-Core Processor",
+  "threads": 12,
+  "physical_cores": 6,
+  "topology_logical_to_core_id": {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 0,
+    "7": 1,
+    "8": 2,
+    "9": 3,
+    "10": 4,
+    "11": 5
+  },
+  "kernel_release": "7.2.3-1-cachyos-eevdf",
+  "ryzen_smu_drv_version": "0.1.7",
+  "smu_fw_version": "98.84.0",
+  "mp1_if_version": "2",
+  "codename_raw": "23",
+  "pm_table_version": "0x620105",
+  "pm_table_size": 1828,
+  "pm_floats": 457,
+  "snapshots": [
+    "pm_table_idle.bin",
+    "pm_table_load.bin"
+  ]
+}
