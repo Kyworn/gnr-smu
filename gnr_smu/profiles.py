@@ -326,6 +326,47 @@ PROFILES = {
         # real peak-current reading should (research/granite_ridge/edc/recheck_edc.py).
         edc_value=64,
     ),
+    # AMD Ryzen 5 9600X / Granite Ridge (Zen 5).  Shares PM table 0x620105 /
+    # 1828 bytes with the 9800X3D, but only has 6 physical cores. A dump
+    # (my_9600x/, 2026-09-12) shows detect_active_slots() reading SMU slots
+    # (0,1,2,3,6,7) live and (4,5) fused off, identically at idle and under
+    # all-core load — hence core_slots below, verified against the live table
+    # at detection time the same way the 5600X's is (_fused_layout_matches).
+    #
+    # Telemetry-only for now: the per-core/global offsets are inherited from
+    # the 9800X3D map on the strength of the identical (version, size), which
+    # this project's own philosophy treats as one source, not independent
+    # confirmation — hence provisional_blocks/provisional_globals cover
+    # everything until cross-validated against k10temp/amdgpu/cpufreq on this
+    # machine specifically (see docs/architectures/granite_ridge/9800X3D_PM_TABLE_0x620105.md).
+    # No SMU write is validated on this part: stock PPT/TDC/EDC and message
+    # IDs are intentionally left at 0 rather than assumed from the 9800X3D or
+    # a published spec sheet, so every write path stays blocked.
+    (0x620105, 1828, 6): HardwareProfile(
+        "AMD Ryzen 5 9600X", "AMD Ryzen 5 9600X", 0x620105, 1828, 6,
+        core_power=333, core_voltage=309, core_temp=317, core_frequency=325,
+        core_fit=None, core_activity=None, core_c0=341, core_cc1=349,
+        core_cc6=357, core_boost_limit=373, boost_limit_confident=False,
+        ccd_power_candidate=None, ccd_vddm_candidate=None,
+        # d[448] reads 49.7 C on the live machine, in the same range as
+        # k10temp Tccd1 (52.5 C) and the per-core temps — same offset the
+        # 9800X3D uses, inherited on the strength of the identical table
+        # version/size. Not independently re-run here (no cache-thrash-vs-ALU
+        # differential test on this chip yet), hence still provisional.
+        ccd_l3_temperature=448, ccd_candidate_count=1,
+        ppt_msg=0, tdc_msg=0, edc_msg=0,
+        stock_ppt=0, stock_tdc=0, stock_edc=0,
+        co_mode="unsupported",
+        co_get_msg=0,
+        allow_smu_writes=False,
+        core_slots=(0, 1, 2, 3, 6, 7),
+        globals_map=_GNR_9800X3D_GLOBALS,
+        provisional_blocks=("core_power", "core_voltage", "core_temp",
+                            "core_frequency", "core_c0", "core_cc1",
+                            "core_cc6", "core_boost_limit",
+                            "ccd_l3_temperature"),
+        provisional_globals=tuple(k for k, _ in _GNR_9800X3D_GLOBALS),
+    ),
     # AMD Ryzen 5 5600X / Vermeer (Zen 3).  Read-only: no SMU command is
     # validated on this part, so every write path stays blocked (see
     # docs/architectures/vermeer/VERMEER_5600X.md for the evidence behind each mapped block).
