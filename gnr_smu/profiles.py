@@ -369,24 +369,30 @@ PROFILES = {
         ppt_write_bounds=(151, 200),
         tdc_write_bounds=(111, 130),
         edc_write_bounds=(111, 225),
-        # Curve Optimizer: READ-ONLY. RSMU 0xD5 (GetDldoPsmMargin) read-back was
-        # verified against known BIOS values across all six cores, through the
-        # slot-aware fix in safety.py (2026-09-12) that routes core->SMU-slot
-        # translation through profile.slot() before building the CCD/core mask —
+        # Curve Optimizer: read AND write validated.
+        #
+        # RSMU 0xD5 (GetDldoPsmMargin) read-back was verified against known BIOS
+        # values across all six cores, through the slot-aware fix in safety.py
+        # (2026-09-12) that routes core->SMU-slot translation through
+        # profile.slot() before building the CCD/core mask —
         # core_slots=(0,1,2,3,6,7) means Linux cores 4/5 are slots 6/7, and the
         # unfixed code would have queried the two fused (inactive) slots instead.
         #
-        # The MP1 *write* path (0x50 + slot, same as the 9800X3D per FINDINGS.md)
-        # does NOT work here: research/dangerous/probe_co_9600x.py wrote core 4's
-        # margin one step off baseline, got RSP=1 (SMU claims accepted), and the
-        # PSM margin read back unchanged. Reproduced with BIOS PBO/Curve
-        # Optimizer switched from Auto to Manual AND Secure Boot disabled
-        # (tested together) — both leading hypotheses ruled out, same result.
-        # Root cause still open. Accepted-but-ignored is worse than refused, so
-        # co_mode stays "unsupported" — this blocks the MP1 write IDs
-        # (smu_message_supported()) while co_get_msg alone, independent of
-        # co_mode, keeps the read path enabled.
-        co_mode="unsupported",
+        # The write side took several passes to land on the right encoding.
+        # The legacy per-core mapping (0x50 + slot, same as the 9800X3D per
+        # FINDINGS.md) got RSP=1 (SMU claims accepted) but never actually moved
+        # the PSM margin — reproduced with BIOS PBO/Curve Optimizer on Manual,
+        # Secure Boot disabled, and kernel lockdown confirmed "none", ruling out
+        # every access-restriction hypothesis. The actual cause was a different
+        # mailbox format: this chip's SMU firmware (98.84.0) is newer than the
+        # 9800X3D's (98.75.0) that 0x50-0x57 was measured on, and like the
+        # 9950X3D (also newer firmware) it uses the packed 0x35 CCD/core-mask
+        # command instead. Confirmed by write/readback via
+        # research/dangerous/probe_co_9600x.py: writing slot 6 (Linux core 4)
+        # through 0x35 moved only that core's margin, landed exactly on the
+        # requested value, and restored cleanly.
+        co_mode="packed_core_mask",
+        co_msg=0x35,
         co_get_msg=0xD5,
         allow_smu_writes=True,
         core_slots=(0, 1, 2, 3, 6, 7),
