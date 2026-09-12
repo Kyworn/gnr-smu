@@ -354,7 +354,7 @@ PROFILES = {
         # version/size. Not independently re-run here (no cache-thrash-vs-ALU
         # differential test on this chip yet), hence still provisional.
         ccd_l3_temperature=448, ccd_candidate_count=1,
-        # 2026-09-12: enabled ONLY to run research/dangerous/probe_tdc_edc_9600x.py,
+        # 2026-09-12: enabled to run research/dangerous/probe_tdc_edc_9600x.py,
         # which identifies which of 0x3C/0x3D drives TDC vs EDC on this part by
         # write/readback (both other Granite Ridge parts landed on
         # 0x3C=TDC/0x3D=EDC, but that is not assumed here). Message IDs are the
@@ -363,14 +363,28 @@ PROFILES = {
         # 111 A) and this machine's live baseline at probe time (200 W / 130 A /
         # 225 A) so the probe can restore what it found — not a general write
         # range, and not this SKU's stock spec (unknown; this machine's BIOS is
-        # not necessarily at stock limits). Curve Optimizer stays unsupported.
+        # not necessarily at stock limits).
         ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=0, stock_tdc=0, stock_edc=0,
         ppt_write_bounds=(151, 200),
         tdc_write_bounds=(111, 130),
         edc_write_bounds=(111, 225),
+        # Curve Optimizer: READ-ONLY. RSMU 0xD5 (GetDldoPsmMargin) read-back was
+        # verified against known BIOS values across all six cores, through the
+        # slot-aware fix in safety.py (2026-09-12) that routes core->SMU-slot
+        # translation through profile.slot() before building the CCD/core mask —
+        # core_slots=(0,1,2,3,6,7) means Linux cores 4/5 are slots 6/7, and the
+        # unfixed code would have queried the two fused (inactive) slots instead.
+        #
+        # The MP1 *write* path (0x50 + slot, same as the 9800X3D per FINDINGS.md)
+        # does NOT work here: research/dangerous/probe_co_9600x.py wrote core 4's
+        # margin one step off baseline, got RSP=1 (SMU claims accepted), and the
+        # PSM margin read back unchanged. Accepted-but-ignored is worse than
+        # refused, so co_mode stays "unsupported" — this blocks the MP1 write IDs
+        # (smu_message_supported()) while co_get_msg alone, independent of
+        # co_mode, keeps the read path enabled.
         co_mode="unsupported",
-        co_get_msg=0,
+        co_get_msg=0xD5,
         allow_smu_writes=True,
         core_slots=(0, 1, 2, 3, 6, 7),
         globals_map=_GNR_9800X3D_GLOBALS,

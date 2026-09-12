@@ -78,7 +78,11 @@ def smu_message_supported(profile, msg_id):
         return False
     allowed = {profile.ppt_msg, profile.tdc_msg, profile.edc_msg}
     if profile.co_mode == "legacy_per_message":
-        allowed.update(range(0x50, 0x50 + profile.cores))
+        # Message IDs are 0x50 + SMU slot, not 0x50 + Linux core index: on a
+        # profile with fused slots (core_slots set), the two diverge and a
+        # contiguous range would both allowlist the fused slots' IDs and miss
+        # the real high-numbered ones.
+        allowed.update(0x50 + profile.slot(core) for core in range(profile.cores))
     elif profile.co_mode == "packed_core_mask":
         allowed.add(profile.co_msg)
     return msg_id in allowed
@@ -172,30 +176,42 @@ def smu_command_allowed(profile, mailbox, msg_id, arg0):
 
 
 def curve_optimizer_command(profile, core, margin):
-    """Return the profile-specific ``(MP1 message, arg0)`` for one physical core."""
+    """Return the profile-specific ``(MP1 message, arg0)`` for one physical core.
+
+    ``core`` is a Linux logical-core index; every wire-level encoding below is in
+    terms of the SMU slot it maps to (``profile.slot()``), since firmware addresses
+    physical core position, not Linux's enumeration order. Identical on every
+    profile with no fused slots (core_slots empty), where slot(core) == core.
+    """
     if not 0 <= core < profile.cores:
         raise ValueError(f"core {core} outside 0..{profile.cores - 1}")
     if not -50 <= margin <= 20:
         raise ValueError("Curve Optimizer margin must be between -50 and 20")
+    slot = profile.slot(core)
     if profile.co_mode == "legacy_per_message":
-        return 0x50 + core, margin & 0xFFFFFFFF
+        return 0x50 + slot, margin & 0xFFFFFFFF
     if profile.co_mode == "packed_core_mask":
         # Zen 3+: [31:28] CCD, [23:20] core-within-CCD, [15:0] signed margin.
-        core_mask = (core // 8) << 28 | (core % 8) << 20
+        core_mask = (slot // 8) << 28 | (slot % 8) << 20
         return profile.co_msg, core_mask | (margin & 0xFFFF)
     raise ValueError(f"unsupported CO command mode: {profile.co_mode} "
                      f"(no Curve Optimizer write is mapped for {profile.name})")
 
 
 def curve_optimizer_read_command(profile, core):
-    """Return the read-only RSMU ``(message, arg0)`` for one physical core."""
+    """Return the read-only RSMU ``(message, arg0)`` for one physical core.
+
+    ``core`` is a Linux logical-core index, translated to its SMU slot the same
+    way curve_optimizer_command() does — see its docstring.
+    """
     if not 0 <= core < profile.cores:
         raise ValueError(f"core {core} outside 0..{profile.cores - 1}")
     if not profile.co_get_msg:
         raise ValueError(f"Curve Optimizer readback is not mapped for {profile.name}")
+    slot = profile.slot(core)
     # Zen 3+: [31:28] CCD, [23:20] core-within-CCD. The low 16 bits are zero
     # for a query and are replaced by the signed margin in the response.
-    core_mask = (core // 8) << 28 | (core % 8) << 20
+    core_mask = (slot // 8) << 28 | (slot % 8) << 20
     return profile.co_get_msg, core_mask
 
 
