@@ -117,6 +117,9 @@ def main():
         if a is not None:
             apply_cmd(profile.edc_msg, int(a * 1000))
     elif choice == '4':
+        if profile.co_mode == "unsupported":
+            print(f"[BLOCKED] Curve Optimizer is not mapped for {profile.name}")
+            return
         applied = True
         for i in range(cores):
             msg_id, arg0 = curve_optimizer_command(profile, i, -30)
@@ -127,11 +130,19 @@ def main():
             if show_co_config(profile) is not None:
                 print("CO -30 applied and verified by SMU readback.")
     elif choice == '5':
+        if profile.stock_ppt <= 0 or profile.stock_tdc <= 0 or profile.stock_edc <= 0:
+            print(f"[BLOCKED] No stock PPT/TDC/EDC values are established for "
+                  f"{profile.name}")
+            return
         applied = apply_cmd(profile.ppt_msg, profile.stock_ppt * 1000)
         if applied:
             applied = apply_cmd(profile.tdc_msg, profile.stock_tdc * 1000)
         if applied:
             applied = apply_cmd(profile.edc_msg, profile.stock_edc * 1000)
+        if applied and profile.co_mode == "unsupported":
+            print(f"Power limits reset; Curve Optimizer is not mapped for "
+                  f"{profile.name}, so it was left untouched.")
+            return
         if applied:
             for i in range(cores):
                 msg_id, arg0 = curve_optimizer_command(profile, i, 0)

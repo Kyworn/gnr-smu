@@ -354,11 +354,24 @@ PROFILES = {
         # version/size. Not independently re-run here (no cache-thrash-vs-ALU
         # differential test on this chip yet), hence still provisional.
         ccd_l3_temperature=448, ccd_candidate_count=1,
-        ppt_msg=0, tdc_msg=0, edc_msg=0,
+        # 2026-09-12: enabled ONLY to run research/dangerous/probe_tdc_edc_9600x.py,
+        # which identifies which of 0x3C/0x3D drives TDC vs EDC on this part by
+        # write/readback (both other Granite Ridge parts landed on
+        # 0x3C=TDC/0x3D=EDC, but that is not assumed here). Message IDs are the
+        # ZenStates-Core Zen4/5 desktop mapping, shared with both other Granite
+        # Ridge profiles. Write bounds cover ONLY the probe's own values (151 W /
+        # 111 A) and this machine's live baseline at probe time (200 W / 130 A /
+        # 225 A) so the probe can restore what it found — not a general write
+        # range, and not this SKU's stock spec (unknown; this machine's BIOS is
+        # not necessarily at stock limits). Curve Optimizer stays unsupported.
+        ppt_msg=0x3E, tdc_msg=0x3C, edc_msg=0x3D,
         stock_ppt=0, stock_tdc=0, stock_edc=0,
+        ppt_write_bounds=(151, 200),
+        tdc_write_bounds=(111, 130),
+        edc_write_bounds=(111, 225),
         co_mode="unsupported",
         co_get_msg=0,
-        allow_smu_writes=False,
+        allow_smu_writes=True,
         core_slots=(0, 1, 2, 3, 6, 7),
         globals_map=_GNR_9800X3D_GLOBALS,
         provisional_blocks=("core_power", "core_voltage", "core_temp",
